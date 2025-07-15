@@ -11,64 +11,9 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
-import { Trophy, Clock, BookOpen, Users, Monitor } from "lucide-react"
-
-interface PricePoint {
-  day: number
-  round?: number
-  cambridgeMining: number
-  oxfordWater: number
-  isTradeDay?: boolean
-}
-
-interface Order {
-  id: string
-  playerId: string
-  playerName: string
-  stock: "CAMB" | "OXFD"
-  type: "BUY" | "SELL"
-  price: number
-  quantity: number
-  round: number
-  status: "PENDING" | "FILLED" | "PARTIAL"
-  filledQuantity?: number
-}
-
-interface Trade {
-  id: string
-  stock: "CAMB" | "OXFD"
-  price: number
-  quantity: number
-  buyerId: string
-  sellerId: string
-  round: number
-}
-
-interface Player {
-  id: string
-  name: string
-  cash: number
-  cambridgeShares: number
-  oxfordShares: number
-  totalValue: number
-  rank?: number
-  isMarketMaker?: boolean
-  isMonitor?: boolean
-  ordersSubmitted?: number
-  isDone?: boolean
-  isOnline?: boolean
-}
-
-interface GameState {
-  currentRound: number
-  phase: "LOBBY" | "SETUP" | "TRADING" | "PROCESSING" | "RESULTS" | "FINISHED"
-  players: Player[]
-  orders: Order[]
-  trades: Trade[]
-  priceHistory: PricePoint[]
-  currentPrices: { CAMB: number; OXFD: number }
-  gameStarted: boolean
-}
+import { Trophy, Clock, BookOpen, Users, Monitor, Wifi, WifiOff, AlertCircle } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useGameState } from "./hooks/useGameState"
 
 // Renders a red dot on trade days, otherwise nothing
 function TradeDot(props: any) {
@@ -78,72 +23,22 @@ function TradeDot(props: any) {
   return null
 }
 
-// Generate synthetic price history for 10 days
-const generatePriceHistory = (): PricePoint[] => {
-  const history: PricePoint[] = []
-  let cambPrice = 50 + Math.random() * 20 // Start between $50-70
-  let oxfordPrice = 30 + Math.random() * 15 // Start between $30-45
-
-  for (let day = 1; day <= 10; day++) {
-    // Add some volatility
-    cambPrice += (Math.random() - 0.5) * 4
-    oxfordPrice += (Math.random() - 0.5) * 3
-
-    // Keep prices reasonable
-    cambPrice = Math.max(20, Math.min(100, cambPrice))
-    oxfordPrice = Math.max(15, Math.min(60, oxfordPrice))
-
-    history.push({
-      day,
-      cambridgeMining: Number(cambPrice.toFixed(2)),
-      oxfordWater: Number(oxfordPrice.toFixed(2)),
-    })
-  }
-  return history
-}
-
-// Create market makers
-const createMarketMakers = (): Player[] => {
-  const marketMakers: Player[] = []
-  const names = ["Goldman MM", "Morgan MM", "Citadel MM", "Jane Street MM", "Virtu MM"]
-
-  for (let i = 0; i < 5; i++) {
-    marketMakers.push({
-      id: `mm${i + 1}`,
-      name: names[i],
-      cash: 100000, // More cash for market making
-      cambridgeShares: 1000,
-      oxfordShares: 1000,
-      totalValue: 0,
-      isMarketMaker: true,
-      ordersSubmitted: 0,
-      isDone: false,
-      isOnline: true,
-    })
-  }
-
-  return marketMakers
-}
-
 export default function TradingGame() {
-  const priceHistory = generatePriceHistory()
-  const lastDay = priceHistory[priceHistory.length - 1]
-
-  const [gameState, setGameState] = useState<GameState>({
-    currentRound: 1,
-    phase: "LOBBY",
-    players: [...createMarketMakers()],
-    orders: [],
-    trades: [],
-    priceHistory,
-    currentPrices: { CAMB: lastDay.cambridgeMining, OXFD: lastDay.oxfordWater },
-    gameStarted: false,
-  })
+  const gameId = "trading-game-1" // In production, this could be dynamic
+  const {
+    gameState,
+    currentPlayerId,
+    isConnected,
+    connectionError,
+    joinGame,
+    submitOrder,
+    markDone,
+    startGame,
+    processRound,
+    nextRound,
+  } = useGameState(gameId)
 
   const [playerName, setPlayerName] = useState("")
-  const [currentPlayerId, setCurrentPlayerId] = useState("")
-  const [isMonitor, setIsMonitor] = useState(false)
-
   const [playerOrder, setPlayerOrder] = useState({
     stock: "CAMB" as "CAMB" | "OXFD",
     type: "BUY" as "BUY" | "SELL",
@@ -151,241 +46,122 @@ export default function TradingGame() {
     quantity: "",
   })
 
-  const currentPlayer = gameState.players.find((p) => p.id === currentPlayerId)
-  const humanPlayers = gameState.players.filter((p) => !p.isMarketMaker)
-  const marketMakers = gameState.players.filter((p) => p.isMarketMaker)
+  const currentPlayer = gameState?.players.find((p) => p.id === currentPlayerId)
+  const humanPlayers = gameState?.players.filter((p) => !p.isMarketMaker) || []
+  const isMonitor = currentPlayer?.isMonitor || false
 
-  // Join game as player or monitor
-  const joinGame = (asMonitor = false) => {
-    if (!playerName.trim()) return
-
-    const newPlayerId = `player_${Date.now()}`
-    const newPlayer: Player = {
-      id: newPlayerId,
-      name: playerName.trim(),
-      cash: 10000,
-      cambridgeShares: 0,
-      oxfordShares: 0,
-      totalValue: 10000,
-      isMonitor: asMonitor,
-      ordersSubmitted: 0,
-      isDone: false,
-      isOnline: true,
-    }
-
-    setGameState((prev) => ({
-      ...prev,
-      players: [...prev.players, newPlayer],
-    }))
-
-    setCurrentPlayerId(newPlayerId)
-    setIsMonitor(asMonitor)
+  // Connection status display
+  if (connectionError) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
+        <Card className="max-w-md">
+          <CardContent className="p-6">
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {connectionError}
+                <br />
+                <Button onClick={() => window.location.reload()} className="mt-2" size="sm">
+                  Retry Connection
+                </Button>
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
-  // Generate market maker orders with more realistic behavior
-  const generateMarketMakerOrders = () => {
-    const mmOrders: Order[] = []
-
-    marketMakers.forEach((mm) => {
-      if (mm.isDone) return
-
-      // Market makers are more active and provide liquidity
-      const ordersToPlace = Math.floor(Math.random() * 4) + 2 // 2-5 orders per MM
-
-      for (let i = 0; i < ordersToPlace && (mm.ordersSubmitted || 0) < 5; i++) {
-        const stock = Math.random() > 0.5 ? "CAMB" : "OXFD"
-        const currentPrice = gameState.currentPrices[stock]
-
-        // Market makers provide liquidity on both sides more frequently
-        const type = Math.random() > 0.5 ? "BUY" : "SELL"
-
-        // Market makers quote tighter spreads around current price
-        let price: number
-        if (type === "BUY") {
-          // Bid slightly below current price (0.5% to 2% below)
-          price = currentPrice * (0.98 + Math.random() * 0.015)
-        } else {
-          // Ask slightly above current price (0.5% to 2% above)
-          price = currentPrice * (1.005 + Math.random() * 0.015)
-        }
-
-        price = Number(price.toFixed(2))
-        const quantity = Math.floor(Math.random() * 150) + 50 // 50-199 shares
-
-        // Check if MM can place this order
-        const canPlace =
-          type === "BUY"
-            ? mm.cash >= price * quantity
-            : (stock === "CAMB" ? mm.cambridgeShares : mm.oxfordShares) >= quantity
-
-        if (canPlace) {
-          mmOrders.push({
-            id: `${mm.id}-${stock}-${Date.now()}-${i}`,
-            playerId: mm.id,
-            playerName: mm.name,
-            stock,
-            type,
-            price,
-            quantity,
-            round: gameState.currentRound,
-            status: "PENDING",
-          })
-
-          mm.ordersSubmitted = (mm.ordersSubmitted || 0) + 1
-        }
-      }
-
-      // Market makers finish after placing their orders
-      mm.isDone = true
-    })
-
-    return mmOrders
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
+        <Card className="max-w-md">
+          <CardContent className="p-6 text-center">
+            <WifiOff className="w-8 h-8 mx-auto mb-4 text-muted-foreground" />
+            <p className="text-muted-foreground">Connecting to game server...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
-  // Calculate new prices based on executed trades
-  const calculateNewPrices = (trades: Trade[]) => {
-    const newPrices = { ...gameState.currentPrices }
+  // Show lobby if no game state or not joined
+  if (!gameState || !currentPlayerId) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-4xl mx-auto">
+          <Card>
+            <CardHeader className="text-center">
+              <CardTitle className="text-3xl font-bold">Trading Simulation Game</CardTitle>
+              <p className="text-muted-foreground">Multiplayer Stock Trading Competition</p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Wifi className="w-4 h-4 text-green-600" />
+                <span className="text-sm text-green-600">Connected</span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="max-w-md mx-auto space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="playerName">Your Name</Label>
+                  <Input
+                    id="playerName"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    placeholder="Enter your name"
+                    onKeyPress={(e) => e.key === "Enter" && playerName.trim() && joinGame(playerName.trim(), false)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => joinGame(playerName.trim(), false)}
+                    className="flex-1"
+                    disabled={!playerName.trim()}
+                  >
+                    <Users className="w-4 h-4 mr-2" />
+                    Join as Player
+                  </Button>
+                  <Button
+                    onClick={() => joinGame(playerName.trim(), true)}
+                    variant="outline"
+                    className="flex-1"
+                    disabled={!playerName.trim()}
+                  >
+                    <Monitor className="w-4 h-4 mr-2" />
+                    Join as Monitor
+                  </Button>
+                </div>
+              </div>
 
-    // Group trades by stock
-    const cambTrades = trades.filter((t) => t.stock === "CAMB")
-    const oxfordTrades = trades.filter((t) => t.stock === "OXFD")
-
-    // Calculate volume-weighted average price for each stock
-    if (cambTrades.length > 0) {
-      const totalVolume = cambTrades.reduce((sum, t) => sum + t.quantity, 0)
-      const totalValue = cambTrades.reduce((sum, t) => sum + t.price * t.quantity, 0)
-      newPrices.CAMB = Number((totalValue / totalVolume).toFixed(2))
-    }
-
-    if (oxfordTrades.length > 0) {
-      const totalVolume = oxfordTrades.reduce((sum, t) => sum + t.quantity, 0)
-      const totalValue = oxfordTrades.reduce((sum, t) => sum + t.price * t.quantity, 0)
-      newPrices.OXFD = Number((totalValue / totalVolume).toFixed(2))
-    }
-
-    return newPrices
-  }
-
-  // Process orders and execute trades
-  const processOrders = (allOrders: Order[]) => {
-    const trades: Trade[] = []
-    const updatedOrders = [...allOrders]
-
-    // Separate buy and sell orders by stock
-    const cambBuys = allOrders
-      .filter((o) => o.stock === "CAMB" && o.type === "BUY" && o.status === "PENDING")
-      .sort((a, b) => b.price - a.price)
-    const cambSells = allOrders
-      .filter((o) => o.stock === "CAMB" && o.type === "SELL" && o.status === "PENDING")
-      .sort((a, b) => a.price - b.price)
-
-    const oxfordBuys = allOrders
-      .filter((o) => o.stock === "OXFD" && o.type === "BUY" && o.status === "PENDING")
-      .sort((a, b) => b.price - a.price)
-    const oxfordSells = allOrders
-      .filter((o) => o.stock === "OXFD" && o.type === "SELL" && o.status === "PENDING")
-      .sort((a, b) => a.price - b.price)
-
-    // Match orders
-    matchOrders(cambBuys, cambSells, "CAMB", trades, updatedOrders)
-    matchOrders(oxfordBuys, oxfordSells, "OXFD", trades, updatedOrders)
-
-    return { trades, orders: updatedOrders }
-  }
-
-  const matchOrders = (
-    buyOrders: Order[],
-    sellOrders: Order[],
-    stock: "CAMB" | "OXFD",
-    trades: Trade[],
-    orders: Order[],
-  ) => {
-    let buyIndex = 0
-    let sellIndex = 0
-
-    while (buyIndex < buyOrders.length && sellIndex < sellOrders.length) {
-      const buyOrder = buyOrders[buyIndex]
-      const sellOrder = sellOrders[sellIndex]
-
-      if (buyOrder.price >= sellOrder.price) {
-        const tradePrice = sellOrder.price
-        const tradeQuantity = Math.min(buyOrder.quantity, sellOrder.quantity)
-
-        trades.push({
-          id: `trade-${Date.now()}-${Math.random()}`,
-          stock,
-          price: tradePrice,
-          quantity: tradeQuantity,
-          buyerId: buyOrder.playerId,
-          sellerId: sellOrder.playerId,
-          round: gameState.currentRound,
-        })
-
-        // Update order quantities
-        const buyOrderIndex = orders.findIndex((o) => o.id === buyOrder.id)
-        const sellOrderIndex = orders.findIndex((o) => o.id === sellOrder.id)
-
-        if (buyOrderIndex !== -1) {
-          orders[buyOrderIndex].quantity -= tradeQuantity
-          orders[buyOrderIndex].filledQuantity = (orders[buyOrderIndex].filledQuantity || 0) + tradeQuantity
-          if (orders[buyOrderIndex].quantity === 0) {
-            orders[buyOrderIndex].status = "FILLED"
-          } else {
-            orders[buyOrderIndex].status = "PARTIAL"
-          }
-        }
-
-        if (sellOrderIndex !== -1) {
-          orders[sellOrderIndex].quantity -= tradeQuantity
-          orders[sellOrderIndex].filledQuantity = (orders[sellOrderIndex].filledQuantity || 0) + tradeQuantity
-          if (orders[sellOrderIndex].quantity === 0) {
-            orders[sellOrderIndex].status = "FILLED"
-          } else {
-            orders[sellOrderIndex].status = "PARTIAL"
-          }
-        }
-
-        if (buyOrder.quantity <= tradeQuantity) buyIndex++
-        if (sellOrder.quantity <= tradeQuantity) sellIndex++
-
-        buyOrder.quantity -= tradeQuantity
-        sellOrder.quantity -= tradeQuantity
-      } else {
-        sellIndex++
-      }
-    }
-  }
-
-  // Update player portfolios based on trades
-  const updatePlayerPortfolios = (trades: Trade[]) => {
-    const updatedPlayers = [...gameState.players]
-
-    trades.forEach((trade) => {
-      const buyerIndex = updatedPlayers.findIndex((p) => p.id === trade.buyerId)
-      const sellerIndex = updatedPlayers.findIndex((p) => p.id === trade.sellerId)
-
-      if (buyerIndex !== -1 && sellerIndex !== -1) {
-        const totalCost = trade.price * trade.quantity
-
-        // Update buyer
-        updatedPlayers[buyerIndex].cash -= totalCost
-        if (trade.stock === "CAMB") {
-          updatedPlayers[buyerIndex].cambridgeShares += trade.quantity
-        } else {
-          updatedPlayers[buyerIndex].oxfordShares += trade.quantity
-        }
-
-        // Update seller
-        updatedPlayers[sellerIndex].cash += totalCost
-        if (trade.stock === "CAMB") {
-          updatedPlayers[sellerIndex].cambridgeShares -= trade.quantity
-        } else {
-          updatedPlayers[sellerIndex].oxfordShares -= trade.quantity
-        }
-      }
-    })
-
-    return updatedPlayers
+              {gameState && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Users className="w-5 h-5" />
+                      Players in Lobby ({humanPlayers.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {humanPlayers.map((player) => (
+                        <div key={player.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <span className="font-medium">{player.name}</span>
+                          <div className="flex items-center gap-2">
+                            {player.isMonitor && <Badge variant="secondary">Monitor</Badge>}
+                            <Badge variant="outline" className="text-green-600">
+                              Online
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   const submitPlayerOrder = () => {
@@ -410,116 +186,16 @@ export default function TradingGame() {
       }
     }
 
-    const newOrder: Order = {
-      id: `${currentPlayerId}-${Date.now()}`,
+    submitOrder({
       playerId: currentPlayerId,
       playerName: currentPlayer.name,
       stock: playerOrder.stock,
       type: playerOrder.type,
       price,
       quantity,
-      round: gameState.currentRound,
-      status: "PENDING",
-    }
-
-    setGameState((prev) => ({
-      ...prev,
-      orders: [...prev.orders, newOrder],
-      players: prev.players.map((p) =>
-        p.id === currentPlayerId ? { ...p, ordersSubmitted: (p.ordersSubmitted || 0) + 1 } : p,
-      ),
-    }))
+    })
 
     setPlayerOrder({ stock: "CAMB", type: "BUY", price: "", quantity: "" })
-  }
-
-  const markPlayerDone = () => {
-    if (!currentPlayer) return
-
-    setGameState((prev) => ({
-      ...prev,
-      players: prev.players.map((p) => (p.id === currentPlayerId ? { ...p, isDone: true } : p)),
-    }))
-  }
-
-  const processRound = () => {
-    setGameState((prev) => ({ ...prev, phase: "PROCESSING" }))
-
-    setTimeout(() => {
-      // Generate market maker orders
-      const mmOrders = generateMarketMakerOrders()
-      const allOrders = [...gameState.orders, ...mmOrders]
-
-      // Process orders and execute trades
-      const { trades, orders } = processOrders(allOrders)
-
-      // Calculate new prices based on trades
-      const newPrices = calculateNewPrices(trades)
-
-      // Update player portfolios
-      const updatedPlayers = updatePlayerPortfolios(trades)
-
-      // Update total values for all players
-      updatedPlayers.forEach((player) => {
-        player.totalValue = player.cash + player.cambridgeShares * newPrices.CAMB + player.oxfordShares * newPrices.OXFD
-      })
-
-      // Add new price point to history if there were trades
-      const newPriceHistory = [...gameState.priceHistory]
-      if (trades.length > 0) {
-        newPriceHistory.push({
-          day: 10 + gameState.currentRound,
-          round: gameState.currentRound,
-          cambridgeMining: newPrices.CAMB,
-          oxfordWater: newPrices.OXFD,
-          isTradeDay: true,
-        })
-      }
-
-      setGameState((prev) => ({
-        ...prev,
-        orders,
-        trades: [...prev.trades, ...trades],
-        players: updatedPlayers,
-        currentPrices: newPrices,
-        priceHistory: newPriceHistory,
-        phase: "RESULTS",
-      }))
-    }, 2000)
-  }
-
-  const nextRound = () => {
-    if (gameState.currentRound >= 10) {
-      // Game finished, calculate final rankings (exclude market makers)
-      const humanPlayersOnly = gameState.players.filter((p) => !p.isMarketMaker)
-      const rankedPlayers = [...gameState.players].map((player) => {
-        if (player.isMarketMaker) return player
-        const rank = humanPlayersOnly.filter((p) => p.totalValue > player.totalValue).length + 1
-        return { ...player, rank }
-      })
-
-      setGameState((prev) => ({
-        ...prev,
-        players: rankedPlayers,
-        phase: "FINISHED",
-      }))
-    } else {
-      setGameState((prev) => ({
-        ...prev,
-        currentRound: prev.currentRound + 1,
-        phase: "TRADING",
-        orders: prev.orders.filter((o) => o.status === "PENDING"),
-        players: prev.players.map((p) => ({ ...p, ordersSubmitted: 0, isDone: false })),
-      }))
-    }
-  }
-
-  const startGame = () => {
-    setGameState((prev) => ({ ...prev, phase: "SETUP", gameStarted: true }))
-  }
-
-  const startTrading = () => {
-    setGameState((prev) => ({ ...prev, phase: "TRADING" }))
   }
 
   const getOrderBook = (stock: "CAMB" | "OXFD") => {
@@ -544,79 +220,56 @@ export default function TradingGame() {
             <CardHeader className="text-center">
               <CardTitle className="text-3xl font-bold">Trading Simulation Game</CardTitle>
               <p className="text-muted-foreground">Multiplayer Stock Trading Competition</p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Wifi className="w-4 h-4 text-green-600" />
+                <span className="text-sm text-green-600">Connected</span>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              {!currentPlayerId ? (
-                <div className="max-w-md mx-auto space-y-4">
+              <div className="text-center">
+                <Badge variant="outline" className="text-lg px-4 py-2">
+                  {isMonitor ? "Monitor" : "Player"}: {currentPlayer?.name}
+                </Badge>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5" />
+                    Players in Lobby ({humanPlayers.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
                   <div className="space-y-2">
-                    <Label htmlFor="playerName">Your Name</Label>
-                    <Input
-                      id="playerName"
-                      value={playerName}
-                      onChange={(e) => setPlayerName(e.target.value)}
-                      placeholder="Enter your name"
-                      onKeyPress={(e) => e.key === "Enter" && joinGame(false)}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button onClick={() => joinGame(false)} className="flex-1">
-                      <Users className="w-4 h-4 mr-2" />
-                      Join as Player
-                    </Button>
-                    <Button onClick={() => joinGame(true)} variant="outline" className="flex-1">
-                      <Monitor className="w-4 h-4 mr-2" />
-                      Join as Monitor
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <Badge variant="outline" className="text-lg px-4 py-2">
-                      {isMonitor ? "Monitor" : "Player"}: {currentPlayer?.name}
-                    </Badge>
-                  </div>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Users className="w-5 h-5" />
-                        Players in Lobby ({humanPlayers.length})
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {humanPlayers.map((player) => (
-                          <div key={player.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                            <span className="font-medium">{player.name}</span>
-                            <div className="flex items-center gap-2">
-                              {player.isMonitor && <Badge variant="secondary">Monitor</Badge>}
-                              <Badge variant="outline" className="text-green-600">
-                                Online
-                              </Badge>
-                            </div>
-                          </div>
-                        ))}
+                    {humanPlayers.map((player) => (
+                      <div key={player.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="font-medium">{player.name}</span>
+                        <div className="flex items-center gap-2">
+                          {player.isMonitor && <Badge variant="secondary">Monitor</Badge>}
+                          <Badge variant="outline" className="text-green-600">
+                            Online
+                          </Badge>
+                        </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
 
-                  {isMonitor && (
-                    <div className="text-center">
-                      <Button onClick={startGame} size="lg" disabled={humanPlayers.length < 2}>
-                        Start Game
-                      </Button>
-                      {humanPlayers.length < 2 && (
-                        <p className="text-sm text-muted-foreground mt-2">Need at least 2 players to start</p>
-                      )}
-                    </div>
+              {isMonitor && (
+                <div className="text-center">
+                  <Button onClick={startGame} size="lg" disabled={humanPlayers.length < 2}>
+                    Start Game
+                  </Button>
+                  {humanPlayers.length < 2 && (
+                    <p className="text-sm text-muted-foreground mt-2">Need at least 2 players to start</p>
                   )}
+                </div>
+              )}
 
-                  {!isMonitor && (
-                    <div className="text-center">
-                      <p className="text-muted-foreground">Waiting for monitor to start the game...</p>
-                    </div>
-                  )}
+              {!isMonitor && (
+                <div className="text-center">
+                  <p className="text-muted-foreground">Waiting for monitor to start the game...</p>
                 </div>
               )}
             </CardContent>
@@ -635,6 +288,10 @@ export default function TradingGame() {
             <CardHeader className="text-center">
               <CardTitle className="text-3xl font-bold">Trading Simulation Game</CardTitle>
               <p className="text-muted-foreground">10-Round Stock Trading Competition</p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Wifi className="w-4 h-4 text-green-600" />
+                <span className="text-sm text-green-600">Connected</span>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Current Prices */}
@@ -719,7 +376,7 @@ export default function TradingGame() {
 
               <div className="text-center">
                 {isMonitor ? (
-                  <Button onClick={startTrading} size="lg">
+                  <Button onClick={() => processRound()} size="lg">
                     Start Trading
                   </Button>
                 ) : (
@@ -749,6 +406,10 @@ export default function TradingGame() {
                 Final Scoreboard
               </CardTitle>
               <p className="text-muted-foreground">Game Complete - 10 Rounds Finished</p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Wifi className="w-4 h-4 text-green-600" />
+                <span className="text-sm text-green-600">Connected</span>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Final Prices Chart */}
@@ -848,18 +509,6 @@ export default function TradingGame() {
   }
 
   // Trading phase - main game interface
-  if (!currentPlayer) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-muted-foreground">Loading...</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -867,6 +516,10 @@ export default function TradingGame() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Trading Game</h1>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Wifi className="w-4 h-4 text-green-600" />
+              <span className="text-sm text-green-600">Connected</span>
+            </div>
             <Badge variant="outline" className="flex items-center gap-2">
               <Clock className="w-4 h-4" />
               Round {gameState.currentRound}/10
@@ -879,7 +532,7 @@ export default function TradingGame() {
                   : "Results"}
             </Badge>
             <Badge variant="outline">
-              {currentPlayer.isMonitor ? "Monitor" : "Player"}: {currentPlayer.name}
+              {currentPlayer?.isMonitor ? "Monitor" : "Player"}: {currentPlayer?.name}
             </Badge>
           </div>
         </div>
@@ -901,14 +554,14 @@ export default function TradingGame() {
         </div>
 
         {/* Player Status (only for non-monitors) */}
-        {!currentPlayer.isMonitor && (
+        {!currentPlayer?.isMonitor && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">Cash Balance</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">${currentPlayer.cash.toLocaleString()}</div>
+                <div className="text-2xl font-bold">${currentPlayer?.cash.toLocaleString()}</div>
               </CardContent>
             </Card>
             <Card>
@@ -916,9 +569,9 @@ export default function TradingGame() {
                 <CardTitle className="text-sm">CAMB Shares</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{currentPlayer.cambridgeShares}</div>
+                <div className="text-2xl font-bold">{currentPlayer?.cambridgeShares}</div>
                 <p className="text-xs text-muted-foreground">
-                  Value: ${(currentPlayer.cambridgeShares * gameState.currentPrices.CAMB).toLocaleString()}
+                  Value: ${((currentPlayer?.cambridgeShares || 0) * gameState.currentPrices.CAMB).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -927,9 +580,9 @@ export default function TradingGame() {
                 <CardTitle className="text-sm">OXFD Shares</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{currentPlayer.oxfordShares}</div>
+                <div className="text-2xl font-bold">{currentPlayer?.oxfordShares}</div>
                 <p className="text-xs text-muted-foreground">
-                  Value: ${(currentPlayer.oxfordShares * gameState.currentPrices.OXFD).toLocaleString()}
+                  Value: ${((currentPlayer?.oxfordShares || 0) * gameState.currentPrices.OXFD).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -938,9 +591,11 @@ export default function TradingGame() {
                 <CardTitle className="text-sm">Total Value</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">${currentPlayer.totalValue.toLocaleString()}</div>
-                <p className={`text-xs ${currentPlayer.totalValue >= 10000 ? "text-green-600" : "text-red-600"}`}>
-                  P&L: ${(currentPlayer.totalValue - 10000).toLocaleString()}
+                <div className="text-2xl font-bold">${currentPlayer?.totalValue.toLocaleString()}</div>
+                <p
+                  className={`text-xs ${(currentPlayer?.totalValue || 0) >= 10000 ? "text-green-600" : "text-red-600"}`}
+                >
+                  P&L: ${((currentPlayer?.totalValue || 0) - 10000).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -952,11 +607,11 @@ export default function TradingGame() {
           <Card>
             <CardHeader>
               <CardTitle>
-                {currentPlayer.isMonitor ? "Monitor Panel" : `Place Orders (${currentPlayer.ordersSubmitted}/5)`}
+                {currentPlayer?.isMonitor ? "Monitor Panel" : `Place Orders (${currentPlayer?.ordersSubmitted}/5)`}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {currentPlayer.isMonitor ? (
+              {currentPlayer?.isMonitor ? (
                 <div className="space-y-4">
                   <div>
                     <h4 className="font-medium mb-2">Player Status</h4>
@@ -983,11 +638,13 @@ export default function TradingGame() {
                     </div>
                   </div>
 
-                  <Button onClick={markPlayerDone} className="w-full bg-transparent" variant="outline">
+                  <Button onClick={markDone} className="w-full bg-transparent" variant="outline">
                     Mark Done (Monitor)
                   </Button>
                 </div>
-              ) : gameState.phase === "TRADING" && !currentPlayer.isDone && (currentPlayer.ordersSubmitted || 0) < 5 ? (
+              ) : gameState.phase === "TRADING" &&
+                !currentPlayer?.isDone &&
+                (currentPlayer?.ordersSubmitted || 0) < 5 ? (
                 <>
                   <div className="space-y-2">
                     <Label>Stock</Label>
@@ -1057,19 +714,19 @@ export default function TradingGame() {
                     <Button onClick={submitPlayerOrder} className="flex-1">
                       Submit Order
                     </Button>
-                    <Button onClick={markPlayerDone} variant="outline" className="flex-1 bg-transparent">
+                    <Button onClick={markDone} variant="outline" className="flex-1 bg-transparent">
                       Done
                     </Button>
                   </div>
                 </>
               ) : (
                 <div className="text-center py-8">
-                  {currentPlayer.isDone ? (
+                  {currentPlayer?.isDone ? (
                     <div>
                       <p className="text-green-600 font-medium">You're Done!</p>
                       <p className="text-sm text-muted-foreground mt-2">Waiting for others...</p>
                     </div>
-                  ) : (currentPlayer.ordersSubmitted || 0) >= 5 ? (
+                  ) : (currentPlayer?.ordersSubmitted || 0) >= 5 ? (
                     <div>
                       <p className="text-blue-600 font-medium">Max Orders Reached!</p>
                       <p className="text-sm text-muted-foreground mt-2">Waiting for others...</p>
@@ -1225,8 +882,8 @@ export default function TradingGame() {
 
 interface OrderBookDisplayProps {
   orderBook: {
-    buyOrders: Order[]
-    sellOrders: Order[]
+    buyOrders: any[]
+    sellOrders: any[]
   }
 }
 
