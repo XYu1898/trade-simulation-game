@@ -27,45 +27,42 @@ export class GameWebSocket {
   constructor(private gameId: string) {}
 
   connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Decide the target WS endpoint.
-        // Priority: 1) explicit env-var 2) same-origin `/api/ws/:gameId`
-        const wsUrl =
-          process.env.NEXT_PUBLIC_WS_SERVER_URL?.replace(/\/$/, "") ||
-          `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`
+  return new Promise((resolve, reject) => {
+    try {
+      const backendHttp = process.env.NEXT_PUBLIC_WS_SERVER_URL?.replace(/\/$/, "") || ""
+      const wsProtocol = backendHttp.startsWith("https") ? "wss" : "ws"
+      const backendHost = backendHttp.replace(/^https?:\/\//, "")
+      const wsUrl = `${wsProtocol}://${backendHost}`
 
-        // final url →  …/api/ws/<gameId>
-        this.ws = new WebSocket(`${wsUrl}/api/ws/${this.gameId}`)
+      this.ws = new WebSocket(`${wsUrl}/api/ws/${this.gameId}`)
 
-        this.ws.onopen = () => {
-          console.log("WebSocket connected")
-          this.reconnectAttempts = 0
-          resolve()
-        }
-
-        this.ws.onmessage = (event) => {
-          try {
-            const message: GameMessage = JSON.parse(event.data)
-            this.messageHandlers.forEach((handler) => handler(message))
-          } catch (error) {
-            console.error("Error parsing WebSocket message:", error)
-          }
-        }
-
-        this.ws.onclose = () => {
-          console.log("WebSocket disconnected")
-          this.attemptReconnect()
-        }
-
-        this.ws.onerror = () => {
-          console.warn("WebSocket connection failed – retrying…")
-          // Let `onclose` handle the back-off reconnect
-        }
-      } catch (error) {
-        reject(error)
+      this.ws.onopen = () => {
+        console.log("WebSocket connected")
+        this.reconnectAttempts = 0
+        resolve()
       }
-    })
+
+      this.ws.onmessage = (event) => {
+        try {
+          const message: GameMessage = JSON.parse(event.data)
+          this.messageHandlers.forEach((handler) => handler(message))
+        } catch (error) {
+          console.error("Error parsing WebSocket message:", error)
+        }
+      }
+
+      this.ws.onclose = () => {
+        console.log("WebSocket disconnected")
+        this.attemptReconnect()
+      }
+
+      this.ws.onerror = () => {
+        console.warn("WebSocket connection failed – retrying…")
+      }
+    } catch (error) {
+      reject(error)
+    }
+  })
   }
 
   private attemptReconnect() {
