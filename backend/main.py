@@ -1,23 +1,20 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development
-    allow_credentials=True,
+    allow_origins=["*"],  # restrict in prod
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-players = []
+@app.get("/ping")
+def ping():
+    return {"message": "pong"}
 
-@app.get("/state")
-def get_state():
-    return {"players": players}
-
-@app.post("/join")
-def join(name: str):
-    players.append({"name": name})
-    return {"ok": True}
+@app.websocket("/api/ws/{game_id}")
+async def websocket_endpoint(websocket: WebSocket, game_id: str):
+    await websocket.accept()
+    await websocket.send_text(f"Connected to game: {game_id}")
