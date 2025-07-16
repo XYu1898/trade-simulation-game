@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Deploying Trading Simulation Game Backend to Fly.io..."
+echo "Deploying backend to Fly.io..."
 
 # Check if flyctl is installed
 if ! command -v flyctl &> /dev/null; then
@@ -10,7 +10,7 @@ if ! command -v flyctl &> /dev/null; then
 fi
 
 # Deploy to Fly.io
-flyctl deploy
+flyctl deploy --remote-only
 
-echo "Deployment complete!"
+echo "Backend deployment complete."
 echo "Your backend is now running at: https://trade-simulation-game.fly.dev"

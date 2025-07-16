@@ -27,7 +27,7 @@ interface Trade {
   id: string
   stock: "CAMB"
   price: number // Changed to number, will be parsed to int
-  quantity: number // Changed to number, will be parsed to int
+  quantity: number // Changed to number, will  be parsed to int
   buyerId: string
   sellerId: string
   round: number
@@ -142,8 +142,8 @@ export function useGameState(gameId: string) {
         playerId: currentPlayerId,
         data: {
           ...order,
-          price: Math.round(order.price), // Ensure price is integer
-          quantity: Math.round(order.quantity), // Ensure quantity is integer
+          price: Math.round(Number(order.price)), // Ensure price is integer
+          quantity: Math.round(Number(order.quantity)), // Ensure quantity is integer
         },
       })
     },

@@ -242,7 +242,7 @@ export default function TradingGame() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Users className="w-5 h-5" />
-                    Players in Lobby ({humanPlayers.length})
+                    Current Players ({humanPlayers.length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
