@@ -25,7 +25,20 @@ export class GameWebSocket {
 
   public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || `ws://localhost:8000/ws/${this.gameId}`
+      // Pick WS URL:
+      // 1. If the user provided NEXT_PUBLIC_WS_URL we trust it.
+      // 2. Otherwise build it from the current origin so previews work.
+      const wsUrl =
+        process.env.NEXT_PUBLIC_WS_URL && process.env.NEXT_PUBLIC_WS_URL.trim().length > 0
+          ? `${process.env.NEXT_PUBLIC_WS_URL}/ws/${this.gameId}`
+          : (() => {
+              // location is always available in the browser at runtime
+              const { protocol, host } = window.location
+              // Switch http → ws   |  https → wss
+              const wsProtocol = protocol === "https:" ? "wss:" : "ws:"
+              return `${wsProtocol}//${host}/ws/${this.gameId}`
+            })()
+
       this.ws = new WebSocket(wsUrl)
 
       this.ws.onopen = () => {
