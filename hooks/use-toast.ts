@@ -24,8 +24,7 @@ const actionTypes = {
 let count = 0
 
 function genId() {
-  count = (count + 1) % Number.MAX_SAFE_INTEGER
-  return count.toString()
+  return count++
 }
 
 type Action =
@@ -39,11 +38,11 @@ type Action =
     }
   | {
       type: typeof actionTypes.DISMISS_TOAST
-      toastId?: string
+      toastId?: ToasterToast["id"]
     }
   | {
       type: typeof actionTypes.REMOVE_TOAST
-      toastId?: string
+      toastId?: ToasterToast["id"]
     }
 
 interface State {
@@ -134,11 +133,7 @@ type Toast = Omit<ToasterToast, "id">
 function toast({ ...props }: Toast) {
   const id = genId()
 
-  const update = (props: ToasterToast) =>
-    dispatch({
-      type: actionTypes.UPDATE_TOAST,
-      toast: { ...props, id },
-    })
+  const update = (props: ToasterToast) => dispatch({ type: actionTypes.UPDATE_TOAST, toast: { ...props, id } })
   const dismiss = () => dispatch({ type: actionTypes.DISMISS_TOAST, toastId: id })
 
   dispatch({
@@ -160,7 +155,7 @@ function toast({ ...props }: Toast) {
   }
 }
 
-export function useToast() {
+function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
@@ -176,8 +171,7 @@ export function useToast() {
   return {
     ...state,
     toast,
-    dismiss: React.useCallback(function dismiss(toastId?: string) {
-      dispatch({ type: actionTypes.DISMISS_TOAST, toastId })
-    }, []),
   }
 }
+
+export { useToast, toast }

@@ -1,9 +1,7 @@
 "use client"
 
 import React from "react"
-
-import { Button } from "@/components/ui/button"
-import { Link } from "next/link"
+import { Link } from "next-view-transitions"
 import { usePathname } from "next/navigation"
 import { Slot } from "@radix-ui/react-slot"
 import { type VariantProps, cva } from "class-variance-authority"
@@ -13,6 +11,8 @@ import { useMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Button } from "@/components/ui/button"
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -134,7 +134,7 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
   items: {
     href: string
     title: string
-    icon: React.ReactNode
+    icon: React.ComponentType<{ className?: string }>
   }[]
 }
 
@@ -142,22 +142,64 @@ export function Sidebar({ className, items, ...props }: SidebarProps) {
   const pathname = usePathname()
 
   return (
-    <nav className={cn("flex space-x-2 lg:flex-col lg:space-x-0 lg:space-y-1", className)} {...props}>
-      {items.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={cn(
-            "inline-flex items-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-9 px-4 py-2 justify-start",
-            pathname === item.href ? "bg-accent text-accent-foreground" : "transparent",
-            item.href.startsWith("/examples/forms") ? "bg-muted hover:bg-muted" : "",
-          )}
-        >
-          {item.icon && <span className="mr-2">{item.icon}</span>}
-          {item.title}
-        </Link>
-      ))}
-    </nav>
+    <div className={cn("pb-12", className)} {...props}>
+      <div className="space-y-4 py-4">
+        <div className="px-3 py-2">
+          <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">Discover</h2>
+          <div className="space-y-1">
+            {items.map((item) => (
+              <Link key={item.href} href={item.href}>
+                <Button variant="ghost" className={cn("w-full justify-start", pathname === item.href && "bg-accent")}>
+                  <item.icon className="mr-2 h-4 w-4" />
+                  {item.title}
+                </Button>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function MobileSidebar({ items }: SidebarProps) {
+  const pathname = usePathname()
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button variant="ghost" size="icon" className="lg:hidden">
+          <PanelLeft className="h-5 w-5" />
+          <span className="sr-only">Toggle Sidebar</span>
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="left" className="flex flex-col p-0">
+        <div className="flex h-14 items-center border-b px-4">
+          <Link href="/" className="flex items-center font-semibold">
+            <span className="ml-2">Acme Inc</span>
+          </Link>
+        </div>
+        <div className="flex-1 overflow-auto py-2">
+          <nav className="grid items-start px-4 text-sm font-medium">
+            {items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-foreground",
+                  pathname === item.href && "bg-accent text-foreground",
+                )}
+                onClick={() => setOpen(false)}
+              >
+                <item.icon className="h-4 w-4" />
+                {item.title}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 

@@ -13,6 +13,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } fro
 import { Trophy, Clock, BookOpen, Users, Monitor, Wifi, WifiOff, AlertCircle, LogIn, StopCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useGameState } from "./hooks/useGameState"
+import OrderBookDisplay from "./order-book-display" // Import OrderBookDisplay
 
 // Renders a red dot on trade days, otherwise nothing
 function TradeDot(props: any) {
@@ -204,9 +205,12 @@ export default function TradingGame() {
   const getOrderBook = (stock: "CAMB") => {
     if (!gameState) return { buyOrders: [], sellOrders: [] }
 
-    const pendingOrders = gameState.orders.filter((o) => o.stock === stock && o.status === "PENDING")
-    const buyOrders = pendingOrders.filter((o) => o.type === "BUY").sort((a, b) => b.price - a.price)
-    const sellOrders = pendingOrders.filter((o) => o.type === "SELL").sort((a, b) => a.price - b.price)
+    // Filter orders for the current round only
+    const currentRoundOrders = gameState.orders.filter(
+      (o) => o.stock === stock && o.status === "PENDING" && o.round === gameState.currentRound,
+    )
+    const buyOrders = currentRoundOrders.filter((o) => o.type === "BUY").sort((a, b) => b.price - a.price)
+    const sellOrders = currentRoundOrders.filter((o) => o.type === "SELL").sort((a, b) => a.price - b.price)
 
     return { buyOrders, sellOrders }
   }
@@ -893,53 +897,6 @@ export default function TradingGame() {
             </CardContent>
           </Card>
         )}
-      </div>
-    </div>
-  )
-}
-
-interface OrderBookDisplayProps {
-  orderBook: {
-    buyOrders: any[]
-    sellOrders: any[]
-  }
-}
-
-function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      <div>
-        <h4 className="font-medium text-green-600 mb-2">Buy Orders (Bids)</h4>
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {orderBook.buyOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No buy orders</p>
-          ) : (
-            orderBook.buyOrders.map((order) => (
-              <div key={order.id} className="flex justify-between text-sm p-2 bg-green-50 rounded">
-                <span>${order.price}</span>
-                <span>{order.quantity}</span>
-                <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      <div>
-        <h4 className="font-medium text-red-600 mb-2">Sell Orders (Asks)</h4>
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {orderBook.sellOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sell orders</p>
-          ) : (
-            orderBook.sellOrders.map((order) => (
-              <div key={order.id} className="flex justify-between text-sm p-2 bg-red-50 rounded">
-                <span>${order.price}</span>
-                <span>{order.quantity}</span>
-                <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
-              </div>
-            ))
-          )}
-        </div>
       </div>
     </div>
   )

@@ -1,91 +1,131 @@
 # Trading Simulation Game
 
-This is a multiplayer stock trading simulation game built with Next.js, React, and a Python FastAPI backend using WebSockets.
+This is a multiplayer stock trading simulation game built with Next.js (frontend) and FastAPI (backend).
 
 ## Features
 
-- **Multiplayer:** Players can join a game instance.
-- **Player Roles:** Players can join as a regular trader or a monitor.
-- **Game Phases:**
-    - **Lobby:** Players join and the monitor starts the game.
-    - **Setup:** Players view game rules and historical price data. Monitor initiates the first trading round.
-    - **Trading:** Players submit buy/sell orders for Cambridge Mining (CAMB) stock.
-    - **Processing:** Orders are matched, trades are executed, and new prices are calculated.
-    - **Results:** Players view round results, including updated portfolios, recent trades, and the order book.
-    - **Finished:** Final scoreboard and game statistics are displayed.
-- **Market Makers:** AI-driven market makers provide liquidity by placing bid and ask orders.
-- **Real-time Updates:** WebSocket communication ensures all players see real-time game state changes.
-- **Scoreboard:** Live and final scoreboards track player performance.
-- **Price Chart:** Visualizes historical and current stock prices.
+-   **Multiplayer:** Supports multiple players and a monitor.
+-   **Trading Rounds:** Players can submit buy/sell orders for a simulated stock (Cambridge Mining - CAMB) over multiple rounds.
+-   **Order Book:** Live order book displays pending buy and sell orders.
+-   **Price History Chart:** Visualizes the stock price movement throughout the game.
+-   **Scoreboard:** Tracks player cash, shares, and total portfolio value.
+-   **Monitor Controls:** A dedicated monitor interface to start/process rounds and manage the game.
+-   **Market Makers:** AI-driven market makers provide liquidity to the market.
+
+## Technologies Used
+
+-   **Frontend:**
+    -   Next.js 14 (React)
+    -   TypeScript
+    -   Tailwind CSS
+    -   shadcn/ui (for UI components)
+    -   Recharts (for charting)
+    -   `ws` (for WebSocket communication)
+-   **Backend:**
+    -   FastAPI (Python web framework)
+    -   `websockets` (for WebSocket communication)
+    -   `uvicorn` (ASGI server)
 
 ## Getting Started
 
-### 1. Environment Variables
-
-You need to set up the following environment variables:
-
-- `NEXT_PUBLIC_WS_URL`: The URL of your WebSocket backend (e.g., `ws://localhost:8000/ws/trading-game-main` for local development, or your deployed backend URL).
-- `NEXT_PUBLIC_VERCEL_URL`: The URL where your Next.js frontend is deployed (e.g., `http://localhost:3000` for local development, or your Vercel deployment URL).
-
-### 2. Run the Backend (Python FastAPI)
-
-Navigate to the `backend` directory and install dependencies:
+### 1. Clone the Repository
 
 \`\`\`bash
-cd backend
-pip install -r requirements.txt
+git clone https://github.com/your-username/trading-simulation-game.git
+cd trading-simulation-game
 \`\`\`
 
-Run the FastAPI application:
+### 2. Backend Setup (Python/FastAPI)
+
+The backend is a FastAPI application that manages the game state and WebSocket connections.
 
 \`\`\`bash
+# Navigate to the backend directory
+cd backend
+
+# Create a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the FastAPI application
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 \`\`\`
 
-The backend will be accessible at `http://localhost:8000`. The WebSocket endpoint will be `ws://localhost:8000/ws/{game_id}`.
+The backend server will run on `http://localhost:8000`.
 
-### 3. Run the Frontend (Next.js)
+### 3. Frontend Setup (Next.js)
 
-Navigate to the root directory of the project and install dependencies:
-
-\`\`\`bash
-npm install # or yarn install
-\`\`\`
-
-Run the Next.js development server:
+The frontend is a Next.js application that provides the user interface for the game.
 
 \`\`\`bash
-npm run dev # or yarn dev
+# Navigate back to the root directory
+cd ..
+
+# Install dependencies
+npm install # or yarn install or pnpm install
+
+# Run the Next.js development server
+npm run dev
 \`\`\`
 
-The frontend will be accessible at `http://localhost:3000`.
+The frontend application will run on `http://localhost:3000`.
+
+### 4. Play the Game
+
+1.  Open your browser and go to `http://localhost:3000`.
+2.  Enter your name and choose to "Join as Player" or "Join as Monitor".
+3.  If you join as a Monitor, you can start the game from the lobby.
+4.  Players can submit orders, view the order book, and track their portfolio.
+5.  The Monitor controls the progression of rounds.
 
 ## Deployment
 
-### Deploying the Backend (e.g., to Fly.io)
+### Deploying the Backend (FastAPI)
 
-1.  **Install Fly.io CLI:** Follow the instructions on the [Fly.io website](https://fly.io/docs/getting-started/installing-flyctl/).
-2.  **Login to Fly.io:** `flyctl auth login`
-3.  **Navigate to backend directory:** `cd backend`
-4.  **Launch the app:** `flyctl launch` (follow prompts, choose a region, etc.)
-5.  **Deploy:** `flyctl deploy`
+You can deploy the FastAPI backend to platforms like Fly.io, Render, or a custom VPS. An example `Dockerfile` and `fly.toml` are provided for Fly.io deployment.
 
-Once deployed, update `NEXT_PUBLIC_WS_URL` in your Next.js project to point to your Fly.io app's WebSocket URL (e.g., `wss://your-app-name.fly.dev/ws/trading-game-main`).
+\`\`\`bash
+# Example for Fly.io deployment
+flyctl launch
+flyctl deploy
+\`\`\`
 
-### Deploying the Frontend (to Vercel)
+### Deploying the Frontend (Next.js)
 
-1.  **Connect your Git repository** to Vercel.
-2.  **Set up environment variables** in your Vercel project settings:
-    - `NEXT_PUBLIC_WS_URL` (your deployed backend WebSocket URL)
-    - `NEXT_PUBLIC_VERCEL_URL` (your Vercel deployment URL, e.g., `https://your-project-name.vercel.app`)
-3.  **Deploy** your project.
+The Next.js frontend can be easily deployed to Vercel.
+
+1.  Create a new project on Vercel and link your Git repository.
+2.  Vercel will automatically detect it as a Next.js project and deploy it.
+3.  **Environment Variables:** If your backend is deployed to a custom URL, you'll need to set the `NEXT_PUBLIC_WS_URL` environment variable in your Vercel project settings to point to your deployed WebSocket backend (e.g., `wss://your-backend-app.fly.dev/ws`).
 
 ## Project Structure
 
-- `backend/`: Python FastAPI WebSocket server.
-- `app/`: Next.js App Router pages.
-- `components/`: Reusable React components (including shadcn/ui).
-- `hooks/`: React hooks for game logic and WebSocket communication.
-- `lib/`: Utility functions.
-- `public/`: Static assets.
-- `styles/`: Global CSS.
+\`\`\`
+.
+├── backend/                # FastAPI backend
+│   ├── main.py             # Main FastAPI application and game logic
+│   ├── requirements.txt    # Python dependencies
+│   ├── Dockerfile          # Dockerfile for containerization
+│   └── fly.toml            # Fly.io configuration
+├── public/                 # Static assets
+├── styles/                 # Global CSS
+├── app/                    # Next.js App Router pages
+│   └── page.tsx            # Main game page
+├── components/             # React components (UI, game-specific)
+│   ├── ui/                 # shadcn/ui components
+│   ├── OrderBookDisplay.tsx # Component for displaying order book
+│   └── trading-game.tsx    # Main game client component
+├── hooks/                  # React hooks
+│   └── useGameState.ts     # Custom hook for game state management
+├── lib/                    # Utility functions
+│   └── websocket.ts        # WebSocket URL helper
+├── trading-simulation.tsx  # Wrapper component for TradingGame
+├── next.config.mjs
+├── package.json
+├── postcss.config.mjs
+├── tailwind.config.ts
+├── tsconfig.json
+└── README.md

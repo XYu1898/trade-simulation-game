@@ -77,7 +77,7 @@ class GameState:
         
         # Initialize with market makers and price history
         self._create_market_makers()
-        self._generate_price_history()
+        self._generate_initial_price_history()
 
     def _create_market_makers(self):
         """Create AI market makers"""
@@ -86,7 +86,7 @@ class GameState:
             mm_id = f"mm{i+1}"
             self.players[mm_id] = Player(mm_id, name, is_market_maker=True)
 
-    def _generate_price_history(self):
+    def _generate_initial_price_history(self):
         """Generate synthetic price history for 10 days with V-shape recovery"""
         # Start at a high price
         start_price = 75
@@ -114,16 +114,50 @@ class GameState:
             prices.append((day, int(current_price)))
         
         # Create price history
+        self.price_history = [] # Clear existing history
         for day, price in prices:
             self.price_history.append(PricePoint(day, price))
         
         # Set current price from last day
         self.current_prices = {"CAMB": prices[-1][1]}
 
+    def reset_game_state(self):
+        """Resets the game state for a new game."""
+        self.current_round = 1
+        self.phase = "SETUP" # Start in SETUP phase after reset
+        self.orders = []
+        self.trades = []
+        self._generate_initial_price_history() # Regenerate initial price history
+        
+        # Reset human players
+        for player in self.players.values():
+            if not player.is_market_maker:
+                player.cash = 10000
+                player.cambridge_shares = 0
+                player.total_value = 10000
+                player.orders_submitted = 0
+                player.is_done = False
+                player.rank = None
+            else: # Reset market makers too
+                player.cash = 100000
+                player.cambridge_shares = 1000
+                player.total_value = 100000
+                player.orders_submitted = 0
+                player.is_done = False
+
+        logger.info("Game state reset for a new game.")
+
+
     def add_player(self, player_id: str, name: str, is_monitor: bool = False):
         """Add a new player to the game"""
-        self.players[player_id] = Player(player_id, name, is_monitor)
-        logger.info(f"Player {name} ({'Monitor' if is_monitor else 'Player'}) joined the game")
+        if player_id not in self.players:
+            self.players[player_id] = Player(player_id, name, is_monitor)
+            logger.info(f"Player {name} ({'Monitor' if is_monitor else 'Player'}) joined the game")
+        else:
+            # If player already exists, just mark them online
+            self.players[player_id].is_online = True
+            logger.info(f"Player {name} ({'Monitor' if is_monitor else 'Player'}) reconnected.")
+
 
     def add_websocket(self, player_id: str, websocket: WebSocket):
         """Associate a websocket with a player"""
@@ -133,6 +167,10 @@ class GameState:
         """Remove websocket association"""
         if player_id in self.websockets:
             del self.websockets[player_id]
+            if player_id in self.players:
+                self.players[player_id].is_online = False # Mark player as offline
+                logger.info(f"Player {self.players[player_id].name} disconnected.")
+
 
     def get_human_players(self) -> List[Player]:
         """Get all human players (non-market makers)"""
@@ -422,12 +460,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             elif message["type"] == "GAME_START":
                 player = game_state.players.get(message["playerId"])
                 if player and player.is_monitor:
-                    game_state.phase = "SETUP" # Set to SETUP for initial game start
-                    # Reset player states for the start of a new game/round 1
-                    for p in game_state.players.values():
-                        if not p.is_market_maker: # Only reset human players
-                            p.orders_submitted = 0
-                            p.is_done = False
+                    game_state.reset_game_state() # Reset game state on new game start
                     await broadcast_game_update()
                     
             elif message["type"] == "ORDER_SUBMIT":
@@ -476,11 +509,17 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     
     except WebSocketDisconnect:
         logger.info(f"Player {player_id} disconnected")
+        if player_id:
+            game_state.remove_websocket(player_id) # Mark player offline on disconnect
+            await broadcast_game_update() # Broadcast update to show player as offline
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        if player_id:
+        if player_id and player_id in game_state.websockets:
+            # This block might be redundant if WebSocketDisconnect handles it,
+            # but good for robustness if other exceptions occur.
             game_state.remove_websocket(player_id)
+            await broadcast_game_update()
 
 async def process_round():
     """Process the current round"""
@@ -502,18 +541,14 @@ async def process_round():
     new_prices = game_state.calculate_new_prices(new_trades)
     game_state.current_prices = new_prices
     
-    # Update player portfolios
-    game_state.update_player_portfolios(new_trades)
-    game_state.update_total_values()
-    
     # Add new price point to history if there were trades
-    if new_trades:
-        game_state.price_history.append(PricePoint(
-            10 + game_state.current_round, # Continue day count
-            new_prices["CAMB"],
-            game_state.current_round,
-            True
-        ))
+    # Use current_round as the 'day' for trade days for sequential X-axis
+    game_state.price_history.append(PricePoint(
+        game_state.current_round + 10, # Continue day count from initial 10 days
+        new_prices["CAMB"],
+        game_state.current_round,
+        True
+    ))
     
     game_state.phase = "RESULTS"
     await broadcast_game_update()
@@ -541,7 +576,8 @@ async def next_round():
             player.is_done = False
         
         # Remove filled orders, keep pending ones
-        game_state.orders = [o for o in game_state.orders if o.status == "PENDING"]
+        # Only keep orders from the current round that are still pending
+        game_state.orders = [o for o in game_state.orders if o.status == "PENDING" and o.round == game_state.current_round]
     
     await broadcast_game_update()
 

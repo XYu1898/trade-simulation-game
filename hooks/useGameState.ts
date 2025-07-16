@@ -1,37 +1,8 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { GameWebSocket, type GameMessage } from "../lib/websocket"
-
-interface PricePoint {
-  day: number
-  round?: number
-  cambridgeMining: number // Now an integer
-  isTradeDay?: boolean
-}
-
-interface Order {
-  id: string
-  playerId: string
-  playerName: string
-  stock: "CAMB"
-  type: "BUY" | "SELL"
-  price: number // Will be rounded to integer before sending
-  quantity: number // Will be rounded to integer before sending
-  round: number
-  status: "PENDING" | "FILLED" | "PARTIAL"
-  filledQuantity?: number
-}
-
-interface Trade {
-  id: string
-  stock: "CAMB"
-  price: number // Now an integer
-  quantity: number
-  buyerId: string
-  sellerId: string
-  round: number
-}
+import { useState, useEffect, useRef, useCallback } from "react"
+import { toast } from "@/components/ui/use-toast"
+import { getWebSocketUrl } from "@/lib/websocket"
 
 interface Player {
   id: string
@@ -39,12 +10,42 @@ interface Player {
   cash: number
   cambridgeShares: number
   totalValue: number
-  rank?: number
-  isMarketMaker?: boolean
-  isMonitor?: boolean
-  ordersSubmitted?: number
-  isDone?: boolean
-  isOnline?: boolean
+  isMarketMaker: boolean
+  isMonitor: boolean
+  ordersSubmitted: number
+  isDone: boolean
+  isOnline: boolean
+  rank: number | null
+}
+
+interface Order {
+  id: string
+  playerId: string
+  playerName: string
+  stock: string
+  type: "BUY" | "SELL"
+  price: number
+  quantity: number
+  round: number
+  status: "PENDING" | "FILLED" | "PARTIAL"
+  filledQuantity: number
+}
+
+interface Trade {
+  id: string
+  stock: string
+  price: number
+  quantity: number
+  buyerId: string
+  sellerId: string
+  round: number
+}
+
+interface PricePoint {
+  day: number
+  cambridgeMining: number
+  round?: number
+  isTradeDay: boolean
 }
 
 interface GameState {
@@ -54,171 +55,138 @@ interface GameState {
   orders: Order[]
   trades: Trade[]
   priceHistory: PricePoint[]
-  currentPrices: { CAMB: number } // Now an integer
+  currentPrices: { CAMB: number }
   gameStarted: boolean
+}
+
+interface OrderData {
+  playerId: string
+  playerName: string
+  stock: string
+  type: "BUY" | "SELL"
+  price: number
+  quantity: number
 }
 
 export function useGameState(gameId: string) {
   const [gameState, setGameState] = useState<GameState | null>(null)
-  const [currentPlayerId, setCurrentPlayerId] = useState<string>("")
+  const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
-  const [connectionError, setConnectionError] = useState<string>("")
-  const [gameSocket, setGameSocket] = useState<GameWebSocket | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const ws = useRef<WebSocket | null>(null)
 
-  // Initialize WebSocket connection
-  useEffect(() => {
-    const socket = new GameWebSocket(gameId)
-    setGameSocket(socket)
+  const connectWebSocket = useCallback(() => {
+    if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+      return
+    }
 
-    socket
-      .connect()
-      .then(() => {
-        setIsConnected(true)
-        setConnectionError("")
-        console.log("Successfully connected to game server")
-      })
-      .catch((error) => {
-        setConnectionError("Failed to connect to game server. Please check your internet connection.")
-        setIsConnected(false)
-        console.error("WebSocket connection failed:", error)
-      })
+    const websocketUrl = getWebSocketUrl(gameId)
+    ws.current = new WebSocket(websocketUrl)
 
-    // Handle incoming messages
-    socket.onMessage((message: GameMessage) => {
-      console.log("Processing message:", message.type)
+    ws.current.onopen = () => {
+      console.log("WebSocket connected")
+      setIsConnected(true)
+      setConnectionError(null)
+      // Attempt to re-join if player ID exists in local storage
+      const storedPlayerId = localStorage.getItem("currentPlayerId")
+      const storedPlayerName = localStorage.getItem("currentPlayerName")
+      const storedIsMonitor = localStorage.getItem("isMonitor") === "true"
 
-      switch (message.type) {
-        case "GAME_UPDATE":
-          console.log("Updating game state:", message.gameState)
-          setGameState(message.gameState)
-          break
-        case "ROUND_COMPLETE":
-          console.log("Round completed, updating state")
-          setGameState(message.gameState)
-          break
-        default:
-          console.log("Unhandled message type:", message.type)
+      if (storedPlayerId && storedPlayerName) {
+        joinGame(storedPlayerName, storedIsMonitor, storedPlayerId)
       }
-    })
+    }
 
-    return () => {
-      socket.disconnect()
+    ws.current.onmessage = (event) => {
+      const message = JSON.parse(event.data)
+      if (message.type === "GAME_UPDATE") {
+        setGameState(message.gameState)
+      }
+    }
+
+    ws.current.onclose = (event) => {
+      console.log("WebSocket disconnected:", event.code, event.reason)
+      setIsConnected(false)
+      setConnectionError("Disconnected from game server. Attempting to reconnect...")
+      setTimeout(connectWebSocket, 3000) // Attempt to reconnect after 3 seconds
+    }
+
+    ws.current.onerror = (error) => {
+      console.error("WebSocket error:", error)
+      setConnectionError("WebSocket connection error. Please check server status.")
+      ws.current?.close() // Close to trigger onclose and reconnect logic
     }
   }, [gameId])
 
-  const joinGame = useCallback(
-    (playerName: string, isMonitor = false) => {
-      if (!gameSocket || !isConnected) {
-        console.error("Cannot join game: not connected to server")
-        return
-      }
+  useEffect(() => {
+    connectWebSocket()
 
-      const playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      setCurrentPlayerId(playerId)
+    return () => {
+      ws.current?.close()
+    }
+  }, [connectWebSocket])
 
-      console.log("Joining game as:", { playerId, playerName, isMonitor })
-
-      gameSocket.sendMessage({
-        type: "PLAYER_JOIN",
-        playerId,
-        playerName,
-        isMonitor,
+  const sendMessage = useCallback((type: string, data: any = {}) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ type, ...data }))
+    } else {
+      console.warn("WebSocket not open. Message not sent:", type, data)
+      toast({
+        title: "Connection Error",
+        description: "Not connected to the game server. Please refresh.",
+        variant: "destructive",
       })
+    }
+  }, [])
+
+  const joinGame = useCallback(
+    (playerName: string, isMonitor: boolean, playerId?: string) => {
+      const id = playerId || `player-${Date.now()}`
+      setCurrentPlayerId(id)
+      localStorage.setItem("currentPlayerId", id)
+      localStorage.setItem("currentPlayerName", playerName)
+      localStorage.setItem("isMonitor", String(isMonitor))
+      sendMessage("PLAYER_JOIN", { playerId: id, playerName, isMonitor })
     },
-    [gameSocket, isConnected],
+    [sendMessage],
   )
 
+  const startGame = useCallback(() => {
+    if (currentPlayerId) {
+      sendMessage("GAME_START", { playerId: currentPlayerId })
+    }
+  }, [currentPlayerId, sendMessage])
+
   const submitOrder = useCallback(
-    (order: Omit<Order, "id" | "round" | "status">) => {
-      if (!gameSocket || !isConnected || !currentPlayerId) {
-        console.error("Cannot submit order: not connected")
-        return
-      }
-
-      // Ensure price and quantity are integers before sending
-      const integerPrice = Math.round(Number(order.price))
-      const integerQuantity = Math.round(Number(order.quantity))
-
-      console.log("Submitting order:", { ...order, price: integerPrice, quantity: integerQuantity })
-
-      gameSocket.sendMessage({
-        type: "ORDER_SUBMIT",
-        playerId: currentPlayerId,
-        data: { ...order, price: integerPrice, quantity: integerQuantity },
-      })
+    (orderData: OrderData) => {
+      sendMessage("ORDER_SUBMIT", { data: orderData })
     },
-    [gameSocket, isConnected, currentPlayerId],
+    [sendMessage],
   )
 
   const markDone = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) {
-      console.error("Cannot mark done: not connected")
-      return
+    if (currentPlayerId) {
+      sendMessage("PLAYER_DONE", { playerId: currentPlayerId })
     }
-
-    console.log("Marking player done:", currentPlayerId)
-
-    gameSocket.sendMessage({
-      type: "PLAYER_DONE",
-      playerId: currentPlayerId,
-    })
-  }, [gameSocket, isConnected, currentPlayerId])
+  }, [currentPlayerId, sendMessage])
 
   const forceCloseOrders = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) {
-      console.error("Cannot force close orders: not connected")
-      return
+    if (currentPlayerId) {
+      sendMessage("FORCE_CLOSE_ORDERS", { playerId: currentPlayerId })
     }
-
-    console.log("Force closing orders")
-
-    gameSocket.sendMessage({
-      type: "FORCE_CLOSE_ORDERS",
-      playerId: currentPlayerId,
-    })
-  }, [gameSocket, isConnected, currentPlayerId])
-
-  const startGame = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) {
-      console.error("Cannot start game: not connected")
-      return
-    }
-
-    console.log("Starting game")
-
-    gameSocket.sendMessage({
-      type: "GAME_START",
-      playerId: currentPlayerId,
-    })
-  }, [gameSocket, isConnected, currentPlayerId])
+  }, [currentPlayerId, sendMessage])
 
   const processRound = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) {
-      console.error("Cannot process round: not connected")
-      return
+    if (currentPlayerId) {
+      sendMessage("ROUND_PROCESS", { playerId: currentPlayerId })
     }
-
-    console.log("Processing round")
-
-    gameSocket.sendMessage({
-      type: "ROUND_PROCESS",
-      playerId: currentPlayerId,
-    })
-  }, [gameSocket, isConnected, currentPlayerId])
+  }, [currentPlayerId, sendMessage])
 
   const nextRound = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) {
-      console.error("Cannot go to next round: not connected")
-      return
+    if (currentPlayerId) {
+      sendMessage("NEXT_ROUND", { playerId: currentPlayerId })
     }
-
-    console.log("Going to next round")
-
-    gameSocket.sendMessage({
-      type: "NEXT_ROUND",
-      playerId: currentPlayerId,
-    })
-  }, [gameSocket, isConnected, currentPlayerId])
+  }, [currentPlayerId, sendMessage])
 
   return {
     gameState,
