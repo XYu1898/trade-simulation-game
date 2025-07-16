@@ -1,7 +1,5 @@
-"use client"
-
 import TradingGame from "../trading-game"
 
-export default function Page() {
+export default function Home() {
   return <TradingGame />
 }

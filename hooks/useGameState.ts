@@ -7,7 +7,6 @@ interface PricePoint {
   day: number
   round?: number
   cambridgeMining: number
-  oxfordWater: number
   isTradeDay?: boolean
 }
 
@@ -15,10 +14,10 @@ interface Order {
   id: string
   playerId: string
   playerName: string
-  stock: "CAMB" | "OXFD"
+  stock: "CAMB"
   type: "BUY" | "SELL"
-  price: number
-  quantity: number
+  price: number // Changed to number, will be parsed to int
+  quantity: number // Changed to number, will be parsed to int
   round: number
   status: "PENDING" | "FILLED" | "PARTIAL"
   filledQuantity?: number
@@ -26,9 +25,9 @@ interface Order {
 
 interface Trade {
   id: string
-  stock: "CAMB" | "OXFD"
-  price: number
-  quantity: number
+  stock: "CAMB"
+  price: number // Changed to number, will be parsed to int
+  quantity: number // Changed to number, will be parsed to int
   buyerId: string
   sellerId: string
   round: number
@@ -39,7 +38,6 @@ interface Player {
   name: string
   cash: number
   cambridgeShares: number
-  oxfordShares: number
   totalValue: number
   rank?: number
   isMarketMaker?: boolean
@@ -56,7 +54,7 @@ interface GameState {
   orders: Order[]
   trades: Trade[]
   priceHistory: PricePoint[]
-  currentPrices: { CAMB: number; OXFD: number }
+  currentPrices: { CAMB: number }
   gameStarted: boolean
 }
 
@@ -77,23 +75,29 @@ export function useGameState(gameId: string) {
       .then(() => {
         setIsConnected(true)
         setConnectionError("")
+        console.log("Successfully connected to game server")
       })
       .catch((error) => {
-        setConnectionError("Failed to connect to game server")
+        setConnectionError("Failed to connect to game server. Please check your internet connection.")
+        setIsConnected(false)
         console.error("WebSocket connection failed:", error)
       })
 
     // Handle incoming messages
     socket.onMessage((message: GameMessage) => {
+      console.log("Processing message:", message.type)
+
       switch (message.type) {
         case "GAME_UPDATE":
+          console.log("Updating game state:", message.gameState)
           setGameState(message.gameState)
           break
-        case "PLAYER_JOIN":
-          // Game state will be updated via GAME_UPDATE message
+        case "ROUND_COMPLETE":
+          console.log("Round completed, updating state")
+          setGameState(message.gameState)
           break
         default:
-          console.log("Received message:", message)
+          console.log("Unhandled message type:", message.type)
       }
     })
 
@@ -105,12 +109,14 @@ export function useGameState(gameId: string) {
   const joinGame = useCallback(
     (playerName: string, isMonitor = false) => {
       if (!gameSocket || !isConnected) {
-        console.error("Not connected to game server")
+        console.error("Cannot join game: not connected to server")
         return
       }
 
       const playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       setCurrentPlayerId(playerId)
+
+      console.log("Joining game as:", { playerId, playerName, isMonitor })
 
       gameSocket.sendMessage({
         type: "PLAYER_JOIN",
@@ -124,19 +130,33 @@ export function useGameState(gameId: string) {
 
   const submitOrder = useCallback(
     (order: Omit<Order, "id" | "round" | "status">) => {
-      if (!gameSocket || !isConnected || !currentPlayerId) return
+      if (!gameSocket || !isConnected || !currentPlayerId) {
+        console.error("Cannot submit order: not connected")
+        return
+      }
+
+      console.log("Submitting order:", order)
 
       gameSocket.sendMessage({
         type: "ORDER_SUBMIT",
         playerId: currentPlayerId,
-        data: order,
+        data: {
+          ...order,
+          price: Math.round(order.price), // Ensure price is integer
+          quantity: Math.round(order.quantity), // Ensure quantity is integer
+        },
       })
     },
     [gameSocket, isConnected, currentPlayerId],
   )
 
   const markDone = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) return
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot mark done: not connected")
+      return
+    }
+
+    console.log("Marking player done:", currentPlayerId)
 
     gameSocket.sendMessage({
       type: "PLAYER_DONE",
@@ -144,8 +164,27 @@ export function useGameState(gameId: string) {
     })
   }, [gameSocket, isConnected, currentPlayerId])
 
+  const forceCloseOrders = useCallback(() => {
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot force close orders: not connected")
+      return
+    }
+
+    console.log("Force closing orders")
+
+    gameSocket.sendMessage({
+      type: "FORCE_CLOSE_ORDERS",
+      playerId: currentPlayerId,
+    })
+  }, [gameSocket, isConnected, currentPlayerId])
+
   const startGame = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) return
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot start game: not connected")
+      return
+    }
+
+    console.log("Starting game")
 
     gameSocket.sendMessage({
       type: "GAME_START",
@@ -154,7 +193,12 @@ export function useGameState(gameId: string) {
   }, [gameSocket, isConnected, currentPlayerId])
 
   const processRound = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) return
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot process round: not connected")
+      return
+    }
+
+    console.log("Processing round")
 
     gameSocket.sendMessage({
       type: "ROUND_PROCESS",
@@ -163,7 +207,12 @@ export function useGameState(gameId: string) {
   }, [gameSocket, isConnected, currentPlayerId])
 
   const nextRound = useCallback(() => {
-    if (!gameSocket || !isConnected || !currentPlayerId) return
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot go to next round: not connected")
+      return
+    }
+
+    console.log("Going to next round")
 
     gameSocket.sendMessage({
       type: "NEXT_ROUND",
@@ -179,6 +228,7 @@ export function useGameState(gameId: string) {
     joinGame,
     submitOrder,
     markDone,
+    forceCloseOrders,
     startGame,
     processRound,
     nextRound,

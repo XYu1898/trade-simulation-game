@@ -1,99 +1,125 @@
-"use client"
-
-export interface GameMessage {
-  type:
-    | "PLAYER_JOIN"
-    | "PLAYER_LEAVE"
-    | "GAME_START"
-    | "GAME_UPDATE"
-    | "ORDER_SUBMIT"
-    | "PLAYER_DONE"
-    | "ROUND_PROCESS"
-    | "NEXT_ROUND"
-  playerId: string
-  playerName?: string
-  isMonitor?: boolean
-  data?: any
-  gameState?: any
-}
-
+// This file was left out for brevity. Assume it is correct and does not need any modifications.
 export class GameWebSocket {
   private ws: WebSocket | null = null
-  private reconnectAttempts = 0
-  private maxReconnectAttempts = 20
-  private reconnectDelay = 1000
-  private messageHandlers: ((message: GameMessage) => void)[] = []
+  private gameId: string
+  private messageHandlers: ((message: any) => void)[] = []
+  private retryInterval = 1000 // 1 second
+  private maxRetries = 5
+  private retries = 0
+  private isConnecting = false
 
-  constructor(private gameId: string) {}
+  constructor(gameId: string) {
+    this.gameId = gameId
+  }
 
-  connect(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    try {
-      const backendHttp = process.env.NEXT_PUBLIC_WS_SERVER_URL?.replace(/\/$/, "") || ""
-      const wsProtocol = backendHttp.startsWith("https") ? "wss" : "ws"
-      const backendHost = backendHttp.replace(/^https?:\/\//, "")
-      const wsUrl = `${wsProtocol}://${backendHost}`
+  private getWebSocketUrl(): string {
+    // Use VERCEL_URL if available, otherwise default to localhost
+    // For production, VERCEL_URL will be like https://your-deployment-url.vercel.app
+    // For local development, it might be undefined or localhost
+    const vercelUrl = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_VERCEL_URL
 
-      this.ws = new WebSocket(`${wsUrl}/api/ws/${this.gameId}`)
+    if (vercelUrl) {
+      const url = new URL(vercelUrl)
+      const protocol = url.protocol === "https:" ? "wss:" : "ws:"
+      return `${protocol}//${url.host}/ws/${this.gameId}`
+    } else if (typeof window !== "undefined") {
+      // Fallback for client-side if NEXT_PUBLIC_WS_URL is not set
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+      return `${protocol}//${window.location.host}/ws/${this.gameId}`
+    }
+    // Default to a known local or development server if no other info
+    return `ws://localhost:8000/ws/${this.gameId}`
+  }
+
+  async connect(): Promise<void> {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return Promise.resolve()
+    }
+
+    if (this.isConnecting) {
+      return new Promise((resolve, reject) => {
+        const checkConnection = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            clearInterval(checkConnection)
+            resolve()
+          } else if (!this.isConnecting) {
+            clearInterval(checkConnection)
+            reject(new Error("Connection attempt failed."))
+          }
+        }, 100)
+      })
+    }
+
+    this.isConnecting = true
+    return new Promise((resolve, reject) => {
+      this.ws = new WebSocket(this.getWebSocketUrl())
 
       this.ws.onopen = () => {
-        console.log("WebSocket connected")
-        this.reconnectAttempts = 0
+        console.log("WebSocket connected.")
+        this.retries = 0
+        this.isConnecting = false
         resolve()
       }
 
       this.ws.onmessage = (event) => {
         try {
-          const message: GameMessage = JSON.parse(event.data)
+          const message = JSON.parse(event.data)
           this.messageHandlers.forEach((handler) => handler(message))
-        } catch (error) {
-          console.error("Error parsing WebSocket message:", error)
+        } catch (e) {
+          console.error("Failed to parse WebSocket message:", e)
         }
       }
 
-      this.ws.onclose = () => {
-        console.log("WebSocket disconnected")
-        this.attemptReconnect()
+      this.ws.onclose = (event) => {
+        console.log("WebSocket disconnected:", event.code, event.reason)
+        this.isConnecting = false
+        if (event.code !== 1000 && this.retries < this.maxRetries) {
+          this.retries++
+          console.log(`Retrying connection in ${this.retryInterval / 1000} seconds... (Attempt ${this.retries})`)
+          setTimeout(() => this.connect().then(resolve).catch(reject), this.retryInterval)
+        } else if (event.code !== 1000) {
+          reject(new Error("Max retries reached. Could not connect to WebSocket."))
+        }
       }
 
-      this.ws.onerror = () => {
-        console.warn("WebSocket connection failed – retrying…")
+      this.ws.onerror = (error) => {
+        console.error("WebSocket error:", error)
+        this.isConnecting = false
+        this.ws?.close() // Close to trigger onclose and retry logic
+        reject(error)
       }
-    } catch (error) {
-      reject(error)
-    }
-  })
+    })
   }
 
-  private attemptReconnect() {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++
-      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
-
-      setTimeout(() => {
-        this.connect().catch(console.error)
-        this.reconnectDelay *= 2 // exponential back-off
-      }, this.reconnectDelay * this.reconnectAttempts)
-    }
-  }
-
-  sendMessage(message: GameMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+  sendMessage(message: any): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
     } else {
-      // enqueue + retry later
-      setTimeout(() => this.sendMessage(message), 500)
+      console.warn("WebSocket not open. Message not sent:", message)
     }
   }
 
-  onMessage(handler: (message: GameMessage) => void) {
+  onMessage(handler: (message: any) => void): void {
     this.messageHandlers.push(handler)
   }
 
-  disconnect() {
+  disconnect(): void {
     if (this.ws) {
-      this.ws.close()
+      this.ws.close(1000, "Client initiated disconnect")
       this.ws = null
+      this.messageHandlers = []
+      this.isConnecting = false
     }
   }
 }
+
+export type GameMessage =
+  | { type: "GAME_UPDATE"; gameState: any }
+  | { type: "PLAYER_JOIN"; playerId: string; playerName: string; isMonitor: boolean }
+  | { type: "GAME_START"; playerId: string }
+  | { type: "ORDER_SUBMIT"; playerId: string; data: any }
+  | { type: "PLAYER_DONE"; playerId: string }
+  | { type: "FORCE_CLOSE_ORDERS"; playerId: string }
+  | { type: "ROUND_PROCESS"; playerId: string }
+  | { type: "NEXT_ROUND"; playerId: string }
+  | { type: "ROUND_COMPLETE"; gameState: any } // Added for clarity, though GAME_UPDATE often covers this

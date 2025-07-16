@@ -8,10 +8,9 @@ import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
-import { Trophy, Clock, BookOpen, Users, Monitor, Wifi, WifiOff, AlertCircle } from "lucide-react"
+import { Trophy, Clock, BookOpen, Users, Monitor, Wifi, WifiOff, AlertCircle, LogIn, StopCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useGameState } from "./hooks/useGameState"
 
@@ -24,7 +23,7 @@ function TradeDot(props: any) {
 }
 
 export default function TradingGame() {
-  const gameId = "trading-game-1" // In production, this could be dynamic
+  const gameId = "trading-game-main" // Single game instance
   const {
     gameState,
     currentPlayerId,
@@ -33,6 +32,7 @@ export default function TradingGame() {
     joinGame,
     submitOrder,
     markDone,
+    forceCloseOrders,
     startGame,
     processRound,
     nextRound,
@@ -40,7 +40,7 @@ export default function TradingGame() {
 
   const [playerName, setPlayerName] = useState("")
   const [playerOrder, setPlayerOrder] = useState({
-    stock: "CAMB" as "CAMB" | "OXFD",
+    stock: "CAMB" as const,
     type: "BUY" as "BUY" | "SELL",
     price: "",
     quantity: "",
@@ -79,24 +79,28 @@ export default function TradingGame() {
           <CardContent className="p-6 text-center">
             <WifiOff className="w-8 h-8 mx-auto mb-4 text-muted-foreground" />
             <p className="text-muted-foreground">Connecting to game server...</p>
+            <p className="text-sm text-muted-foreground mt-2">Server: trade-simulation-game.fly.dev</p>
           </CardContent>
         </Card>
       </div>
     )
   }
 
-  // Show lobby if no game state or not joined
-  if (!gameState || !currentPlayerId) {
+  // Show login if no current player
+  if (!currentPlayerId) {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-4xl mx-auto">
           <Card>
             <CardHeader className="text-center">
-              <CardTitle className="text-3xl font-bold">Trading Simulation Game</CardTitle>
+              <CardTitle className="text-3xl font-bold flex items-center justify-center gap-2">
+                <LogIn className="w-8 h-8" />
+                Trading Simulation Game
+              </CardTitle>
               <p className="text-muted-foreground">Multiplayer Stock Trading Competition</p>
               <div className="flex items-center justify-center gap-2 mt-2">
                 <Wifi className="w-4 h-4 text-green-600" />
-                <span className="text-sm text-green-600">Connected</span>
+                <span className="text-sm text-green-600">Connected to Server</span>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -132,12 +136,12 @@ export default function TradingGame() {
                 </div>
               </div>
 
-              {gameState && (
+              {gameState && humanPlayers.length > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Users className="w-5 h-5" />
-                      Players in Lobby ({humanPlayers.length})
+                      Current Players ({humanPlayers.length})
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -167,9 +171,9 @@ export default function TradingGame() {
   const submitPlayerOrder = () => {
     if (!currentPlayer || currentPlayer.isMonitor) return
     if (!playerOrder.price || !playerOrder.quantity) return
-    if ((currentPlayer.ordersSubmitted || 0) >= 5) return
+    if ((currentPlayer.ordersSubmitted || 0) >= 2) return
 
-    const price = Number.parseFloat(playerOrder.price)
+    const price = Number.parseInt(playerOrder.price)
     const quantity = Number.parseInt(playerOrder.quantity)
 
     // Validate order
@@ -179,8 +183,7 @@ export default function TradingGame() {
         return
       }
     } else {
-      const shares = playerOrder.stock === "CAMB" ? currentPlayer.cambridgeShares : currentPlayer.oxfordShares
-      if (shares < quantity) {
+      if (currentPlayer.cambridgeShares < quantity) {
         alert("Insufficient shares!")
         return
       }
@@ -198,7 +201,9 @@ export default function TradingGame() {
     setPlayerOrder({ stock: "CAMB", type: "BUY", price: "", quantity: "" })
   }
 
-  const getOrderBook = (stock: "CAMB" | "OXFD") => {
+  const getOrderBook = (stock: "CAMB") => {
+    if (!gameState) return { buyOrders: [], sellOrders: [] }
+
     const pendingOrders = gameState.orders.filter((o) => o.stock === stock && o.status === "PENDING")
     const buyOrders = pendingOrders.filter((o) => o.type === "BUY").sort((a, b) => b.price - a.price)
     const sellOrders = pendingOrders.filter((o) => o.type === "SELL").sort((a, b) => a.price - b.price)
@@ -207,12 +212,13 @@ export default function TradingGame() {
   }
 
   const canProcessRound = () => {
-    const humanPlayersOnly = gameState.players.filter((p) => !p.isMarketMaker)
-    return humanPlayersOnly.every((p) => p.isDone || (p.ordersSubmitted || 0) >= 5)
+    if (!gameState) return false
+    const nonMonitorPlayers = gameState.players.filter((p) => !p.isMarketMaker && !p.isMonitor)
+    return nonMonitorPlayers.every((p) => p.isDone || (p.ordersSubmitted || 0) >= 2)
   }
 
   // Lobby phase - players join the game
-  if (gameState.phase === "LOBBY") {
+  if (gameState?.phase === "LOBBY") {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-4xl mx-auto">
@@ -222,7 +228,7 @@ export default function TradingGame() {
               <p className="text-muted-foreground">Multiplayer Stock Trading Competition</p>
               <div className="flex items-center justify-center gap-2 mt-2">
                 <Wifi className="w-4 h-4 text-green-600" />
-                <span className="text-sm text-green-600">Connected</span>
+                <span className="text-sm text-green-600">Connected to Server</span>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -258,11 +264,11 @@ export default function TradingGame() {
 
               {isMonitor && (
                 <div className="text-center">
-                  <Button onClick={startGame} size="lg" disabled={humanPlayers.length < 2}>
+                  <Button onClick={startGame} size="lg" disabled={humanPlayers.filter((p) => !p.isMonitor).length < 1}>
                     Start Game
                   </Button>
-                  {humanPlayers.length < 2 && (
-                    <p className="text-sm text-muted-foreground mt-2">Need at least 2 players to start</p>
+                  {humanPlayers.filter((p) => !p.isMonitor).length < 1 && (
+                    <p className="text-sm text-muted-foreground mt-2">Need at least 1 player to start</p>
                   )}
                 </div>
               )}
@@ -280,7 +286,7 @@ export default function TradingGame() {
   }
 
   // Setup phase - show rules and price history
-  if (gameState.phase === "SETUP") {
+  if (gameState?.phase === "SETUP") {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-6xl mx-auto">
@@ -290,22 +296,16 @@ export default function TradingGame() {
               <p className="text-muted-foreground">10-Round Stock Trading Competition</p>
               <div className="flex items-center justify-center gap-2 mt-2">
                 <Wifi className="w-4 h-4 text-green-600" />
-                <span className="text-sm text-green-600">Connected</span>
+                <span className="text-sm text-green-600">Connected to Server</span>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Current Prices */}
-              <div className="grid grid-cols-2 gap-4">
-                <Card>
+              {/* Current Price */}
+              <div className="flex justify-center">
+                <Card className="w-96">
                   <CardHeader className="text-center">
                     <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-                    <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
-                  </CardHeader>
-                </Card>
-                <Card>
-                  <CardHeader className="text-center">
-                    <CardTitle className="text-lg">Oxford Water (OXFD)</CardTitle>
-                    <div className="text-3xl font-bold text-green-600">${gameState.currentPrices.OXFD.toFixed(2)}</div>
+                    <div className="text-4xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
                   </CardHeader>
                 </Card>
               </div>
@@ -316,14 +316,14 @@ export default function TradingGame() {
                     <CardTitle>Game Rules</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 text-sm">
-                    <p>• Trade two stocks: Cambridge Mining (CAMB) and Oxford Water (OXFD)</p>
+                    <p>• Trade Cambridge Mining (CAMB) stock only</p>
                     <p>• 10 rounds of trading with order matching</p>
-                    <p>• Submit up to 5 orders per round</p>
+                    <p>• Submit up to 2 orders per round</p>
                     <p>• Click "Done" to finish early and wait for others</p>
                     <p>• Orders execute when bid ≥ ask price</p>
                     <p>• View order book depth before each decision</p>
                     <p>• Starting capital: $10,000</p>
-                    <p>• 5 market makers provide liquidity</p>
+                    <p>• Market makers provide liquidity</p>
                   </CardContent>
                 </Card>
 
@@ -338,10 +338,6 @@ export default function TradingGame() {
                           label: "Cambridge Mining",
                           color: "hsl(var(--chart-1))",
                         },
-                        oxfordWater: {
-                          label: "Oxford Water",
-                          color: "hsl(var(--chart-2))",
-                        },
                       }}
                       className="h-[300px]"
                     >
@@ -349,21 +345,18 @@ export default function TradingGame() {
                         <LineChart data={gameState.priceHistory}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="day" />
-                          <YAxis />
+                          <YAxis
+                            domain={[
+                              Math.floor(Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining)) - 5),
+                              Math.ceil(Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining)) + 5),
+                            ]}
+                          />
                           <ChartTooltip content={<ChartTooltipContent />} />
                           <Line
                             type="monotone"
                             dataKey="cambridgeMining"
                             stroke="var(--color-cambridgeMining)"
                             name="Cambridge Mining"
-                            strokeWidth={2}
-                            dot={<TradeDot />}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="oxfordWater"
-                            stroke="var(--color-oxfordWater)"
-                            name="Oxford Water"
                             strokeWidth={2}
                             dot={<TradeDot />}
                           />
@@ -376,8 +369,8 @@ export default function TradingGame() {
 
               <div className="text-center">
                 {isMonitor ? (
-                  <Button onClick={() => processRound()} size="lg">
-                    Start Trading
+                  <Button onClick={startGame} size="lg">
+                    Start Trading Round 1
                   </Button>
                 ) : (
                   <p className="text-muted-foreground">Waiting for monitor to start trading...</p>
@@ -391,7 +384,7 @@ export default function TradingGame() {
   }
 
   // Finished phase - show final scoreboard
-  if (gameState.phase === "FINISHED") {
+  if (gameState?.phase === "FINISHED") {
     const humanPlayersOnly = gameState.players
       .filter((p) => !p.isMarketMaker)
       .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
@@ -408,7 +401,7 @@ export default function TradingGame() {
               <p className="text-muted-foreground">Game Complete - 10 Rounds Finished</p>
               <div className="flex items-center justify-center gap-2 mt-2">
                 <Wifi className="w-4 h-4 text-green-600" />
-                <span className="text-sm text-green-600">Connected</span>
+                <span className="text-sm text-green-600">Connected to Server</span>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -424,10 +417,6 @@ export default function TradingGame() {
                         label: "Cambridge Mining",
                         color: "hsl(var(--chart-1))",
                       },
-                      oxfordWater: {
-                        label: "Oxford Water",
-                        color: "hsl(var(--chart-2))",
-                      },
                     }}
                     className="h-[300px]"
                   >
@@ -435,21 +424,18 @@ export default function TradingGame() {
                       <LineChart data={gameState.priceHistory}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="day" />
-                        <YAxis />
+                        <YAxis
+                          domain={[
+                            Math.floor(Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining)) - 5),
+                            Math.ceil(Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining)) + 5),
+                          ]}
+                        />
                         <ChartTooltip content={<ChartTooltipContent />} />
                         <Line
                           type="monotone"
                           dataKey="cambridgeMining"
                           stroke="var(--color-cambridgeMining)"
                           name="Cambridge Mining"
-                          strokeWidth={2}
-                          dot={<TradeDot />}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="oxfordWater"
-                          stroke="var(--color-oxfordWater)"
-                          name="Oxford Water"
                           strokeWidth={2}
                           dot={<TradeDot />}
                         />
@@ -467,7 +453,6 @@ export default function TradingGame() {
                     <TableHead>Player</TableHead>
                     <TableHead>Cash</TableHead>
                     <TableHead>CAMB Shares</TableHead>
-                    <TableHead>OXFD Shares</TableHead>
                     <TableHead>Total Value</TableHead>
                     <TableHead>Profit/Loss</TableHead>
                   </TableRow>
@@ -490,7 +475,6 @@ export default function TradingGame() {
                       </TableCell>
                       <TableCell>${player.cash.toLocaleString()}</TableCell>
                       <TableCell>{player.cambridgeShares}</TableCell>
-                      <TableCell>{player.oxfordShares}</TableCell>
                       <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
                       <TableCell>
                         <span className={player.totalValue >= 10000 ? "text-green-600" : "text-red-600"}>
@@ -501,6 +485,12 @@ export default function TradingGame() {
                   ))}
                 </TableBody>
               </Table>
+
+              <div className="text-center">
+                <Button onClick={() => window.location.reload()} size="lg">
+                  Start New Game
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -509,6 +499,18 @@ export default function TradingGame() {
   }
 
   // Trading phase - main game interface
+  if (!gameState) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-muted-foreground">Loading game state...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -537,25 +539,19 @@ export default function TradingGame() {
           </div>
         </div>
 
-        {/* Current Prices */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <Card>
+        {/* Current Price */}
+        <div className="flex justify-center mb-6">
+          <Card className="w-96">
             <CardHeader className="text-center pb-2">
               <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-              <div className="text-2xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="text-center pb-2">
-              <CardTitle className="text-lg">Oxford Water (OXFD)</CardTitle>
-              <div className="text-2xl font-bold text-green-600">${gameState.currentPrices.OXFD.toFixed(2)}</div>
+              <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
             </CardHeader>
           </Card>
         </div>
 
         {/* Player Status (only for non-monitors) */}
         {!currentPlayer?.isMonitor && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">Cash Balance</CardTitle>
@@ -572,17 +568,6 @@ export default function TradingGame() {
                 <div className="text-2xl font-bold">{currentPlayer?.cambridgeShares}</div>
                 <p className="text-xs text-muted-foreground">
                   Value: ${((currentPlayer?.cambridgeShares || 0) * gameState.currentPrices.CAMB).toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">OXFD Shares</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{currentPlayer?.oxfordShares}</div>
-                <p className="text-xs text-muted-foreground">
-                  Value: ${((currentPlayer?.oxfordShares || 0) * gameState.currentPrices.OXFD).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -607,7 +592,7 @@ export default function TradingGame() {
           <Card>
             <CardHeader>
               <CardTitle>
-                {currentPlayer?.isMonitor ? "Monitor Panel" : `Place Orders (${currentPlayer?.ordersSubmitted}/5)`}
+                {currentPlayer?.isMonitor ? "Monitor Panel" : `Place Orders (${currentPlayer?.ordersSubmitted || 0}/2)`}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -622,7 +607,7 @@ export default function TradingGame() {
                           <div key={player.id} className="flex justify-between text-sm p-2 bg-gray-50 rounded">
                             <span>{player.name}</span>
                             <div className="flex items-center gap-2">
-                              <span>{player.ordersSubmitted}/5</span>
+                              <span>{player.ordersSubmitted || 0}/2</span>
                               {player.isDone ? (
                                 <Badge variant="default" className="text-xs">
                                   Done
@@ -638,30 +623,33 @@ export default function TradingGame() {
                     </div>
                   </div>
 
-                  <Button onClick={markDone} className="w-full bg-transparent" variant="outline">
-                    Mark Done (Monitor)
-                  </Button>
+                  {gameState.phase === "TRADING" && (
+                    <div className="space-y-2">
+                      <Button onClick={forceCloseOrders} variant="destructive" className="w-full" size="sm">
+                        <StopCircle className="w-4 h-4 mr-2" />
+                        Force Close Orders
+                      </Button>
+
+                      {canProcessRound() && (
+                        <Button onClick={processRound} className="w-full" variant="default">
+                          Process Round {gameState.currentRound}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {gameState.phase === "RESULTS" && (
+                    <Button onClick={nextRound} className="w-full">
+                      {gameState.currentRound >= 10
+                        ? "View Final Results"
+                        : `Start Round ${gameState.currentRound + 1}`}
+                    </Button>
+                  )}
                 </div>
               ) : gameState.phase === "TRADING" &&
                 !currentPlayer?.isDone &&
-                (currentPlayer?.ordersSubmitted || 0) < 5 ? (
+                (currentPlayer?.ordersSubmitted || 0) < 2 ? (
                 <>
-                  <div className="space-y-2">
-                    <Label>Stock</Label>
-                    <Select
-                      value={playerOrder.stock}
-                      onValueChange={(value: "CAMB" | "OXFD") => setPlayerOrder((prev) => ({ ...prev, stock: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="CAMB">Cambridge Mining (${gameState.currentPrices.CAMB})</SelectItem>
-                        <SelectItem value="OXFD">Oxford Water (${gameState.currentPrices.OXFD})</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
                   <div className="space-y-2">
                     <Label>Order Type</Label>
                     <Select
@@ -682,10 +670,10 @@ export default function TradingGame() {
                     <Label>Price per Share</Label>
                     <Input
                       type="number"
-                      step="0.01"
+                      step="1"
                       value={playerOrder.price}
                       onChange={(e) => setPlayerOrder((prev) => ({ ...prev, price: e.target.value }))}
-                      placeholder="Enter your price"
+                      placeholder="Enter your price (integer)"
                     />
                   </div>
 
@@ -693,9 +681,10 @@ export default function TradingGame() {
                     <Label>Quantity</Label>
                     <Input
                       type="number"
+                      step="1"
                       value={playerOrder.quantity}
                       onChange={(e) => setPlayerOrder((prev) => ({ ...prev, quantity: e.target.value }))}
-                      placeholder="Number of shares"
+                      placeholder="Number of shares (integer)"
                     />
                   </div>
 
@@ -704,7 +693,9 @@ export default function TradingGame() {
                       <p className="text-sm">
                         <strong>
                           Total: $
-                          {(Number.parseFloat(playerOrder.price) * Number.parseInt(playerOrder.quantity)).toFixed(2)}
+                          {(
+                            Number.parseInt(playerOrder.price) * Number.parseInt(playerOrder.quantity)
+                          ).toLocaleString()}
                         </strong>
                       </p>
                     </div>
@@ -726,32 +717,30 @@ export default function TradingGame() {
                       <p className="text-green-600 font-medium">You're Done!</p>
                       <p className="text-sm text-muted-foreground mt-2">Waiting for others...</p>
                     </div>
-                  ) : (currentPlayer?.ordersSubmitted || 0) >= 5 ? (
+                  ) : (currentPlayer?.ordersSubmitted || 0) >= 2 ? (
                     <div>
                       <p className="text-blue-600 font-medium">Max Orders Reached!</p>
                       <p className="text-sm text-muted-foreground mt-2">Waiting for others...</p>
+                    </div>
+                  ) : gameState.phase === "PROCESSING" ? (
+                    <div>
+                      <p className="text-orange-600 font-medium">Processing Round...</p>
+                      <p className="text-sm text-muted-foreground mt-2">Please wait</p>
+                    </div>
+                  ) : gameState.phase === "RESULTS" ? (
+                    <div>
+                      <p className="text-blue-600 font-medium">Round Complete!</p>
+                      <p className="text-sm text-muted-foreground mt-2">Waiting for next round...</p>
                     </div>
                   ) : (
                     <p className="text-muted-foreground">Trading phase ended</p>
                   )}
                 </div>
               )}
-
-              {gameState.phase === "TRADING" && canProcessRound() && isMonitor && (
-                <Button onClick={processRound} className="w-full" variant="default">
-                  Process Round
-                </Button>
-              )}
-
-              {gameState.phase === "RESULTS" && isMonitor && (
-                <Button onClick={nextRound} className="w-full">
-                  {gameState.currentRound >= 10 ? "View Final Results" : "Next Round"}
-                </Button>
-              )}
             </CardContent>
           </Card>
 
-          {/* Price Chart and Order Books */}
+          {/* Price Chart and Order Book */}
           <div className="lg:col-span-2 space-y-6">
             {/* Price Chart */}
             <Card>
@@ -765,10 +754,6 @@ export default function TradingGame() {
                       label: "Cambridge Mining",
                       color: "hsl(var(--chart-1))",
                     },
-                    oxfordWater: {
-                      label: "Oxford Water",
-                      color: "hsl(var(--chart-2))",
-                    },
                   }}
                   className="h-[300px]"
                 >
@@ -776,7 +761,12 @@ export default function TradingGame() {
                     <LineChart data={gameState.priceHistory}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="day" />
-                      <YAxis />
+                      <YAxis
+                        domain={[
+                          Math.floor(Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining)) - 5),
+                          Math.ceil(Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining)) + 5),
+                        ]}
+                      />
                       <ChartTooltip content={<ChartTooltipContent />} />
                       <Line
                         type="monotone"
@@ -786,55 +776,24 @@ export default function TradingGame() {
                         strokeWidth={2}
                         dot={<TradeDot />}
                       />
-                      <Line
-                        type="monotone"
-                        dataKey="oxfordWater"
-                        stroke="var(--color-oxfordWater)"
-                        name="Oxford Water"
-                        strokeWidth={2}
-                        dot={<TradeDot />}
-                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </ChartContainer>
               </CardContent>
             </Card>
 
-            {/* Order Books */}
-            <Tabs defaultValue="camb" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="camb">Cambridge Mining</TabsTrigger>
-                <TabsTrigger value="oxfd">Oxford Water</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="camb">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <BookOpen className="w-5 h-5" />
-                      CAMB Order Book
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <OrderBookDisplay orderBook={getOrderBook("CAMB")} />
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="oxfd">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <BookOpen className="w-5 h-5" />
-                      OXFD Order Book
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <OrderBookDisplay orderBook={getOrderBook("OXFD")} />
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
+            {/* Order Book */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BookOpen className="w-5 h-5" />
+                  CAMB Order Book
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <OrderBookDisplay orderBook={getOrderBook("CAMB")} />
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -864,10 +823,67 @@ export default function TradingGame() {
                       <TableRow key={trade.id}>
                         <TableCell>{trade.round}</TableCell>
                         <TableCell className="font-medium">{trade.stock}</TableCell>
-                        <TableCell>${trade.price.toFixed(2)}</TableCell>
+                        <TableCell>${trade.price}</TableCell>
                         <TableCell>{trade.quantity}</TableCell>
                         <TableCell>{gameState.players.find((p) => p.id === trade.buyerId)?.name}</TableCell>
                         <TableCell>{gameState.players.find((p) => p.id === trade.sellerId)?.name}</TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Live Scoreboard */}
+        {humanPlayers.filter((p) => !p.isMonitor).length > 0 && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Trophy className="w-5 h-5" />
+                Live Scoreboard
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Rank</TableHead>
+                    <TableHead>Player</TableHead>
+                    <TableHead>Total Value</TableHead>
+                    <TableHead>P&L</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {humanPlayers
+                    .filter((p) => !p.isMonitor)
+                    .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
+                    .map((player, index) => (
+                      <TableRow key={player.id} className={player.id === currentPlayerId ? "bg-blue-50" : ""}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {index === 0 && <Trophy className="w-4 h-4 text-yellow-500" />}#{index + 1}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">{player.name}</TableCell>
+                        <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
+                        <TableCell>
+                          <span className={player.totalValue >= 10000 ? "text-green-600" : "text-red-600"}>
+                            ${(player.totalValue - 10000).toLocaleString()}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {player.isDone ? (
+                            <Badge variant="default" className="text-xs">
+                              Done
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs">
+                              Trading
+                            </Badge>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                 </TableBody>
@@ -898,7 +914,7 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           ) : (
             orderBook.buyOrders.map((order) => (
               <div key={order.id} className="flex justify-between text-sm p-2 bg-green-50 rounded">
-                <span>${order.price.toFixed(2)}</span>
+                <span>${order.price}</span>
                 <span>{order.quantity}</span>
                 <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
@@ -915,7 +931,7 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           ) : (
             orderBook.sellOrders.map((order) => (
               <div key={order.id} className="flex justify-between text-sm p-2 bg-red-50 rounded">
-                <span>${order.price.toFixed(2)}</span>
+                <span>${order.price}</span>
                 <span>{order.quantity}</span>
                 <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
