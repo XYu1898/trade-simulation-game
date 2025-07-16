@@ -1,22 +1,27 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
-set -e
+# This script deploys the FastAPI backend to Fly.io
 
-echo "Deploying backend to Fly.io..."
+echo "Deploying FastAPI backend to Fly.io..."
+
+# Ensure flyctl is installed and logged in
+if ! command -v flyctl &> /dev/null
+then
+    echo "flyctl could not be found. Please install it: https://fly.io/docs/getting-started/installing-flyctl/"
+    exit 1
+fi
+
+flyctl auth status > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "Not logged into Fly.io. Please run 'flyctl auth login'."
+    exit 1
+fi
 
 # Navigate to the backend directory
-cd backend
-
-# Ensure flyctl is authenticated
-echo "Checking Fly.io authentication..."
-flyctl auth whoami
+SCRIPT_DIR=$(dirname "$0")
+cd "$SCRIPT_DIR"
 
 # Deploy the application
-echo "Running flyctl deploy..."
 flyctl deploy
 
-echo "Backend deployment complete!"
-
-# Navigate back to the root directory (optional, depending on your workflow)
-cd ..
+echo "FastAPI backend deployment complete."

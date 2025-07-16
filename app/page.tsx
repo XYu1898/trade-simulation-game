@@ -1,5 +1,9 @@
 import TradingGame from "@/trading-game"
 
-export default function Home() {
-  return <TradingGame />
+export default function Page() {
+  return (
+    <main>
+      <TradingGame />
+    </main>
+  )
 }

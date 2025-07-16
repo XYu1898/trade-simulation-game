@@ -422,8 +422,8 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             elif message["type"] == "GAME_START":
                 player = game_state.players.get(message["playerId"])
                 if player and player.is_monitor:
-                    game_state.phase = "TRADING" # Set to TRADING for Round 1
-                    # Explicitly reset player states for the start of a new game/round 1
+                    game_state.phase = "SETUP" # Set to SETUP for initial game start
+                    # Reset player states for the start of a new game/round 1
                     for p in game_state.players.values():
                         if not p.is_market_maker: # Only reset human players
                             p.orders_submitted = 0

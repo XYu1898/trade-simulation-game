@@ -1,64 +1,56 @@
-export interface GameMessage {
-  type: string
-  gameState?: any
-  [key: string]: any
-}
+"use client"
+
+export type GameMessage =
+  | { type: "PLAYER_JOIN"; playerId: string; playerName: string; isMonitor: boolean }
+  | { type: "GAME_START"; playerId: string }
+  | { type: "ORDER_SUBMIT"; playerId: string; data: any }
+  | { type: "PLAYER_DONE"; playerId: string }
+  | { type: "FORCE_CLOSE_ORDERS"; playerId: string }
+  | { type: "ROUND_PROCESS"; playerId: string }
+  | { type: "NEXT_ROUND"; playerId: string }
+  | { type: "GAME_UPDATE"; gameState: any }
+  | { type: "ROUND_COMPLETE"; gameState: any }
 
 export class GameWebSocket {
   private ws: WebSocket | null = null
   private gameId: string
   private messageHandlers: ((message: GameMessage) => void)[] = []
   private reconnectAttempts = 0
-  private maxReconnectAttempts = 5
-  private reconnectDelay = 1000
+  private maxReconnectAttempts = 10
+  private reconnectDelayMs = 1000
 
   constructor(gameId: string) {
     this.gameId = gameId
   }
 
-  async connect(): Promise<void> {
+  public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      try {
-        // Use environment variable or fallback to fly.dev
-        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "wss://trade-simulation-game.fly.dev"
-        const fullUrl = `${wsUrl}/ws/${this.gameId}`
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || `ws://localhost:8000/ws/${this.gameId}`
+      this.ws = new WebSocket(wsUrl)
 
-        console.log("Connecting to WebSocket:", fullUrl)
+      this.ws.onopen = () => {
+        console.log("WebSocket connected.")
+        this.reconnectAttempts = 0 // Reset reconnect attempts on successful connection
+        resolve()
+      }
 
-        this.ws = new WebSocket(fullUrl)
-
-        this.ws.onopen = () => {
-          console.log("WebSocket connected successfully")
-          this.reconnectAttempts = 0
-          resolve()
+      this.ws.onmessage = (event) => {
+        try {
+          const message: GameMessage = JSON.parse(event.data as string)
+          this.messageHandlers.forEach((handler) => handler(message))
+        } catch (error) {
+          console.error("Failed to parse WebSocket message:", error)
         }
+      }
 
-        this.ws.onmessage = (event) => {
-          try {
-            const message: GameMessage = JSON.parse(event.data)
-            this.messageHandlers.forEach((handler) => handler(message))
-          } catch (error) {
-            console.error("Error parsing WebSocket message:", error)
-          }
-        }
+      this.ws.onclose = (event) => {
+        console.log("WebSocket disconnected:", event.code, event.reason)
+        this.attemptReconnect()
+      }
 
-        this.ws.onclose = (event) => {
-          console.log("WebSocket connection closed:", event.code, event.reason)
-          this.attemptReconnect()
-        }
-
-        this.ws.onerror = (error) => {
-          console.error("WebSocket error:", error)
-          reject(error)
-        }
-
-        // Connection timeout
-        setTimeout(() => {
-          if (this.ws?.readyState !== WebSocket.OPEN) {
-            reject(new Error("WebSocket connection timeout"))
-          }
-        }, 10000)
-      } catch (error) {
+      this.ws.onerror = (error) => {
+        console.error("WebSocket error:", error)
+        this.ws?.close() // Force close to trigger onclose and reconnect logic
         reject(error)
       }
     })
@@ -67,34 +59,35 @@ export class GameWebSocket {
   private attemptReconnect() {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++
-      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
-
+      const delay = this.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1) // Exponential backoff
+      console.log(`Attempting to reconnect in ${delay / 1000} seconds... (Attempt ${this.reconnectAttempts})`)
       setTimeout(() => {
-        this.connect().catch((error) => {
-          console.error("Reconnection failed:", error)
-        })
-      }, this.reconnectDelay * this.reconnectAttempts)
+        this.connect().catch((e) => console.error("Reconnect failed:", e))
+      }, delay)
     } else {
-      console.error("Max reconnection attempts reached")
+      console.error("Max reconnect attempts reached. Please refresh the page.")
+      // Optionally, notify the user via UI that connection is lost permanently
     }
   }
 
-  sendMessage(message: any) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+  public sendMessage(message: GameMessage): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
     } else {
-      console.error("WebSocket is not connected")
+      console.warn("WebSocket not connected. Message not sent:", message)
     }
   }
 
-  onMessage(handler: (message: GameMessage) => void) {
+  public onMessage(handler: (message: GameMessage) => void): void {
     this.messageHandlers.push(handler)
   }
 
-  disconnect() {
+  public disconnect(): void {
     if (this.ws) {
+      this.ws.onclose = null // Prevent reconnect attempt on intentional disconnect
       this.ws.close()
       this.ws = null
+      console.log("WebSocket intentionally disconnected.")
     }
   }
 }

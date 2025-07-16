@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import * as React from "react"
 
 export function useMobile() {
-  const [isMobile, setIsMobile] = useState(false)
+  const [isMobile, setIsMobile] = React.useState(false)
 
-  useEffect(() => {
+  React.useEffect(() => {
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768) // Adjust breakpoint as needed
+      setIsMobile(window.innerWidth < 768)
     }
 
     checkMobile()

@@ -273,36 +273,38 @@ function broadcastToGame(gameId, message) {
 const server = http.createServer()
 const wss = new WebSocket.Server({ server })
 
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const gameId = url.pathname.split('/').pop();
-  
-  console.log(`New connection to game: ${gameId}`);
+wss.on("connection", (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`)
+  const gameId = url.pathname.split("/").pop()
+
+  console.log(`New connection to game: ${gameId}`)
 
   // Initialize game if it doesn't exist
   if (!games.has(gameId)) {
     games.set(gameId, {
       state: initializeGame(gameId),
-      clients: new Set()
-    });
+      clients: new Set(),
+    })
   }
 
-  const game = games.get(gameId);
-  game.clients.add(ws);
+  const game = games.get(gameId)
+  game.clients.add(ws)
 
   // Send current game state to new client
-  ws.send(JSON.stringify({
-    type: 'GAME_UPDATE',
-    gameState: game.state
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "GAME_UPDATE",
+      gameState: game.state,
+    }),
+  )
 
-  ws.on('message', (data) => {
+  ws.on("message", (data) => {
     try {
-      const message = JSON.parse(data);
-      console.log(`Received message:`, message);
+      const message = JSON.parse(data)
+      console.log(`Received message:`, message)
 
       switch (message.type) {
-        case 'PLAYER_JOIN':
+        case "PLAYER_JOIN":
           const newPlayer = {
             id: message.playerId,
             name: message.playerName,
@@ -314,88 +316,87 @@ wss.on('connection', (ws, req) => {
             ordersSubmitted: 0,
             isDone: false,
             isOnline: true,
-          };
-
-          game.state.players.push(newPlayer);
-          
-          broadcastToGame(gameId, {
-            type: 'GAME_UPDATE',
-            gameState: game.state
-          });
-          break;
-
-        case 'GAME_START':
-          const monitor = game.state.players.find(p => p.id === message.playerId && p.isMonitor);
-          if (monitor) {
-            game.state.phase = "SETUP";
-            broadcastToGame(gameId, {
-              type: 'GAME_UPDATE',
-              gameState: game.state
-            });
           }
-          break;
 
-        case 'ORDER_SUBMIT':
-          const player = game.state.players.find(p => p.id === message.playerId);
+          game.state.players.push(newPlayer)
+
+          broadcastToGame(gameId, {
+            type: "GAME_UPDATE",
+            gameState: game.state,
+          })
+          break
+
+        case "GAME_START":
+          const monitor = game.state.players.find((p) => p.id === message.playerId && p.isMonitor)
+          if (monitor) {
+            game.state.phase = "SETUP"
+            broadcastToGame(gameId, {
+              type: "GAME_UPDATE",
+              gameState: game.state,
+            })
+          }
+          break
+
+        case "ORDER_SUBMIT":
+          const player = game.state.players.find((p) => p.id === message.playerId)
           if (player && !player.isMonitor && (player.ordersSubmitted || 0) < 5) {
             const newOrder = {
               ...message.data,
               id: `${message.playerId}-${Date.now()}`,
               round: game.state.currentRound,
               status: "PENDING",
-            };
+            }
 
-            game.state.orders.push(newOrder);
-            player.ordersSubmitted = (player.ordersSubmitted || 0) + 1;
+            game.state.orders.push(newOrder)
+            player.ordersSubmitted = (player.ordersSubmitted || 0) + 1
 
             broadcastToGame(gameId, {
-              type: 'GAME_UPDATE',
-              gameState: game.state
-            });
+              type: "GAME_UPDATE",
+              gameState: game.state,
+            })
           }
-          break;
+          break
 
-        case 'PLAYER_DONE':
-          const donePlayer = game.state.players.find(p => p.id === message.playerId);
+        case "PLAYER_DONE":
+          const donePlayer = game.state.players.find((p) => p.id === message.playerId)
           if (donePlayer) {
-            donePlayer.isDone = true;
+            donePlayer.isDone = true
             broadcastToGame(gameId, {
-              type: 'GAME_UPDATE',
-              gameState: game.state
-            });
+              type: "GAME_UPDATE",
+              gameState: game.state,
+            })
           }
-          break;
+          break
 
-        case 'ROUND_PROCESS':
-          const processingMonitor = game.state.players.find(p => p.id === message.playerId && p.isMonitor);
+        case "ROUND_PROCESS":
+          const processingMonitor = game.state.players.find((p) => p.id === message.playerId && p.isMonitor)
           if (processingMonitor) {
-            game.state.phase = "PROCESSING";
+            game.state.phase = "PROCESSING"
             broadcastToGame(gameId, {
-              type: 'GAME_UPDATE',
-              gameState: game.state
-            });
+              type: "GAME_UPDATE",
+              gameState: game.state,
+            })
 
             // Process round after delay
             setTimeout(() => {
               // Generate market maker orders
-              const mmOrders = generateMarketMakerOrders(game.state);
-              const allOrders = [...game.state.orders, ...mmOrders];
+              const mmOrders = generateMarketMakerOrders(game.state)
+              const allOrders = [...game.state.orders, ...mmOrders]
 
               // Process orders and execute trades
-              const { trades, orders } = processOrders(allOrders);
+              const { trades, orders } = processOrders(allOrders)
 
               // Calculate new prices
-              const newPrices = calculateNewPrices(trades, game.state.currentPrices);
+              const newPrices = calculateNewPrices(trades, game.state.currentPrices)
 
               // Update player portfolios
-              const updatedPlayers = updatePlayerPortfolios(game.state.players, trades);
+              const updatedPlayers = updatePlayerPortfolios(game.state.players, trades)
 
               // Update total values
-              updatedPlayers.forEach(player => {
-                player.totalValue = player.cash + 
-                  player.cambridgeShares * newPrices.CAMB + 
-                  player.oxfordShares * newPrices.OXFD;
-              });
+              updatedPlayers.forEach((player) => {
+                player.totalValue =
+                  player.cash + player.cambridgeShares * newPrices.CAMB + player.oxfordShares * newPrices.OXFD
+              })
 
               // Add new price point to history if there were trades
               if (trades.length > 0) {
@@ -405,11 +406,47 @@ wss.on('connection', (ws, req) => {
                   cambridgeMining: newPrices.CAMB,
                   oxfordWater: newPrices.OXFD,
                   isTradeDay: true,
-                });
+                })
               }
 
               // Update game state
-              game.state.orders = orders;
-              game.state.trades = [...game.state.trades, ...trades];
-              game.state.players = updatedPlayers;
-              game.state.currentPrices = newPrices;
+              game.state.orders = orders
+              game.state.trades = [...game.state.trades, ...trades]
+              game.state.players = updatedPlayers
+              game.state.currentPrices = newPrices
+
+              // Move to the next round
+              game.state.currentRound++
+              game.state.phase = "LOBBY"
+
+              broadcastToGame(gameId, {
+                type: "GAME_UPDATE",
+                gameState: game.state,
+              })
+            }, 1000) // Delay for 1 second
+          }
+          break
+
+        default:
+          console.log(`Unknown message type: ${message.type}`)
+      }
+    } catch (error) {
+      console.error("Error parsing message:", error)
+    }
+  })
+
+  ws.on("close", () => {
+    console.log(`Client disconnected from game: ${gameId}`)
+    game.clients.delete(ws)
+  })
+
+  ws.on("error", (error) => {
+    console.error("WebSocket error:", error)
+  })
+
+  ws.send("Welcome to the WebSocket server!")
+})
+
+server.listen(8080, () => {
+  console.log("WebSocket server started on port 8080")
+})

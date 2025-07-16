@@ -6,7 +6,7 @@ import { GameWebSocket, type GameMessage } from "../lib/websocket"
 interface PricePoint {
   day: number
   round?: number
-  cambridgeMining: number
+  cambridgeMining: number // Now an integer
   isTradeDay?: boolean
 }
 
@@ -16,8 +16,8 @@ interface Order {
   playerName: string
   stock: "CAMB"
   type: "BUY" | "SELL"
-  price: number
-  quantity: number
+  price: number // Will be rounded to integer before sending
+  quantity: number // Will be rounded to integer before sending
   round: number
   status: "PENDING" | "FILLED" | "PARTIAL"
   filledQuantity?: number
@@ -26,7 +26,7 @@ interface Order {
 interface Trade {
   id: string
   stock: "CAMB"
-  price: number
+  price: number // Now an integer
   quantity: number
   buyerId: string
   sellerId: string
@@ -54,7 +54,7 @@ interface GameState {
   orders: Order[]
   trades: Trade[]
   priceHistory: PricePoint[]
-  currentPrices: { CAMB: number }
+  currentPrices: { CAMB: number } // Now an integer
   gameStarted: boolean
 }
 
@@ -135,12 +135,16 @@ export function useGameState(gameId: string) {
         return
       }
 
-      console.log("Submitting order:", order)
+      // Ensure price and quantity are integers before sending
+      const integerPrice = Math.round(Number(order.price))
+      const integerQuantity = Math.round(Number(order.quantity))
+
+      console.log("Submitting order:", { ...order, price: integerPrice, quantity: integerQuantity })
 
       gameSocket.sendMessage({
         type: "ORDER_SUBMIT",
         playerId: currentPlayerId,
-        data: order,
+        data: { ...order, price: integerPrice, quantity: integerQuantity },
       })
     },
     [gameSocket, isConnected, currentPlayerId],
