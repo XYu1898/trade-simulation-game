@@ -1,170 +1,94 @@
 # Trading Simulation Game
 
-This is a real-time trading simulation game built with Next.js, React, and a Python FastAPI backend using WebSockets.
+A multiplayer stock trading simulation game with real-time WebSocket communication.
 
 ## Features
 
--   **Real-time Trading:** Players can buy and sell shares of a simulated asset.
--   **Order Book:** Displays live buy and sell orders.
--   **Price Chart:** Visualizes historical price movements.
--   **Player Portfolios:** Tracks each player's balance and shares.
--   **Game Rounds:** The game progresses in rounds, with prices and trades settling at the end of each round.
--   **Market Maker:** An automated market maker provides liquidity by placing bid and ask orders.
+- **Multiplayer Support**: Multiple players can join and trade simultaneously
+- **Monitor Role**: A monitor can control game flow and process rounds
+- **Real-time Updates**: All players see live updates of orders, trades, and prices
+- **Order Book**: View buy/sell orders for both stocks
+- **Market Makers**: AI players provide liquidity
+- **Live Scoreboard**: Real-time rankings and portfolio values
+- **Price Charts**: Historical price data with trade markers
 
-## Technologies Used
+## Architecture
 
--   **Frontend:**
-    -   Next.js (React Framework)
-    -   TypeScript
-    -   Tailwind CSS
-    -   shadcn/ui (for UI components)
-    -   Recharts (for charting)
-    -   `ws` (WebSocket client)
--   **Backend:**
-    -   Python 3.9+
-    -   FastAPI (for API and WebSocket handling)
-    -   `uvicorn` (ASGI server)
-    -   `websockets` (Python WebSocket library)
+- **Frontend**: Next.js with React, TypeScript, and shadcn/ui
+- **Backend**: Python FastAPI with WebSocket support
+- **Deployment**: Frontend on Vercel, Backend on Fly.io
 
-## Getting Started
+## Setup Instructions
 
-### Prerequisites
+### Backend Deployment (Fly.io)
 
--   Node.js (v18 or higher)
--   npm (v8 or higher)
--   Python (v3.9 or higher)
--   pip (Python package installer)
+1. Install Fly.io CLI:
+   \`\`\`bash
+   curl -L https://fly.io/install.sh | sh
+   \`\`\`
 
-### 1. Clone the Repository
+2. Login to Fly.io:
+   \`\`\`bash
+   fly auth login
+   \`\`\`
 
-\`\`\`bash
-git clone <repository-url>
-cd trading-simulation-game
-\`\`\`
+3. Navigate to backend folder and deploy:
+   \`\`\`bash
+   cd backend
+   chmod +x deploy.sh
+   ./deploy.sh
+   \`\`\`
 
-### 2. Backend Setup
+4. Your backend will be available at: `https://trade-simulation-game.fly.dev`
 
-Navigate to the `backend` directory:
+### Frontend Deployment (Vercel)
 
+1. Push your code to GitHub
+
+2. Connect your GitHub repo to Vercel
+
+3. Deploy - the frontend will automatically connect to your Fly.io backend
+
+## Game Rules
+
+1. **Two Stocks**: Cambridge Mining (CAMB) and Oxford Water (OXFD)
+2. **10 Rounds**: Each round allows up to 5 orders per player
+3. **Starting Capital**: $10,000 per player
+4. **Order Matching**: Orders execute when bid price ≥ ask price
+5. **Market Makers**: 5 AI players provide liquidity
+6. **Scoring**: Final ranking based on total portfolio value
+
+## How to Play
+
+1. **Join Game**: Enter your name and join as Player or Monitor
+2. **Wait for Players**: Monitor starts the game when ready
+3. **View Setup**: See game rules and historical price data
+4. **Trade**: Submit buy/sell orders each round
+5. **Monitor Processing**: Monitor processes each round when players are done
+6. **Live Updates**: See real-time price updates and portfolio changes
+7. **Final Scoreboard**: View final rankings after 10 rounds
+
+## Development
+
+### Local Backend
 \`\`\`bash
 cd backend
-\`\`\`
-
-Create a virtual environment and activate it:
-
-\`\`\`bash
-python -m venv venv
-# On Windows
-.\venv\Scripts\activate
-# On macOS/Linux
-source venv/bin/activate
-\`\`\`
-
-Install the Python dependencies:
-
-\`\`\`bash
 pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 \`\`\`
 
-Run the FastAPI backend server:
-
-\`\`\`bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-\`\`\`
-
-The backend server will run on `http://localhost:8000`.
-
-### 3. Frontend Setup
-
-Open a new terminal and navigate back to the root of the project:
-
-\`\`\`bash
-cd ..
-\`\`\`
-
-Install the Node.js dependencies:
-
+### Local Frontend
 \`\`\`bash
 npm install
-\`\`\`
-
-Set up environment variables. Create a `.env.local` file in the root directory and add the WebSocket URL for your backend:
-
-\`\`\`
-NEXT_PUBLIC_WS_URL=localhost:8000
-\`\`\`
-
-Run the Next.js development server:
-
-\`\`\`bash
 npm run dev
 \`\`\`
 
-The frontend application will be available at `http://localhost:3000`.
+## Environment Variables
 
-## Deployment
+No environment variables needed - the frontend automatically connects to your Fly.io backend at `https://trade-simulation-game.fly.dev`.
 
-### Deploying to Vercel (Frontend)
+## Support
 
-This project is designed to be easily deployed to Vercel.
-
-1.  **Create a new Vercel Project:** Go to your [Vercel Dashboard](https://vercel.com/dashboard) and click "Add New... Project".
-2.  **Import Your Git Repository:** Connect your Git repository (GitHub, GitLab, Bitbucket).
-3.  **Configure Project:**
-    -   **Framework Preset:** Next.js
-    -   **Root Directory:** (Leave empty if your project root is the repository root)
-    -   **Environment Variables:** Add `NEXT_PUBLIC_WS_URL` pointing to your deployed backend WebSocket URL (e.g., `your-backend-app.fly.dev`).
-4.  **Deploy:** Click "Deploy".
-
-### Deploying Backend to Fly.io (or similar)
-
-The `backend` directory contains a `Dockerfile` and `fly.toml` for easy deployment to Fly.io.
-
-1.  **Install Fly.io CLI:** Follow the instructions on the [Fly.io documentation](https://fly.io/docs/getting-started/installing-flyctl/).
-2.  **Login to Fly.io:**
-    \`\`\`bash
-    flyctl auth login
-    \`\`\`
-3.  **Navigate to Backend Directory:**
-    \`\`\`bash
-    cd backend
-    \`\`\`
-4.  **Launch the App:**
-    \`\`\`bash
-    flyctl launch
-    \`\`\`
-    Follow the prompts. This will create a `fly.toml` file (if not already present) and suggest a region.
-5.  **Deploy:**
-    \`\`\`bash
-    flyctl deploy
-    \`\`\`
-    This will build and deploy your FastAPI application. Note the URL of your deployed app.
-
-    **Important:** After deploying your backend, update the `NEXT_PUBLIC_WS_URL` environment variable in your Vercel project settings to point to your Fly.io app's WebSocket URL (e.g., `wss://your-app-name.fly.dev/ws`).
-
-## Project Structure
-
-\`\`\`
-.
-├── app/
-│   └── page.tsx           # Main page for the Next.js app
-├── backend/
-│   ├── main.py            # FastAPI backend logic
-│   ├── Dockerfile         # Dockerfile for backend deployment
-│   ├── requirements.txt   # Python dependencies
-│   └── fly.toml           # Fly.io configuration
-├── components/
-│   ├── ui/                # shadcn/ui components
-│   ├── order-book-display.tsx # Component to display order book
-│   └── trading-game.tsx   # Main trading game component
-├── hooks/
-│   └── useGameState.ts    # Custom hook for managing game state
-├── lib/
-│   └── websocket.ts       # WebSocket client logic
-├── public/                # Static assets
-├── styles/
-│   └── globals.css        # Global CSS styles (Tailwind)
-├── next.config.mjs        # Next.js configuration
-├── package.json           # Frontend dependencies
-├── tailwind.config.ts     # Tailwind CSS configuration
-└── tsconfig.json          # TypeScript configuration
+For issues or questions, check the logs:
+- Backend logs: `fly logs -a trade-simulation-game`
+- Frontend logs: Check Vercel dashboard

@@ -1,374 +1,556 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
-import { Chart } from "@/components/ui/chart"
-import { useToast } from "@/components/ui/use-toast"
-import { useWebSocket } from "@/lib/websocket"
-import { useGameState } from "@/hooks/useGameState"
-import { OrderBookDisplay } from "./order-book-display"
+import type React from "react"
 
-interface Player {
-  id: string
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity, LogOut } from "lucide-react"
+
+interface Stock {
+  symbol: string
   name: string
-  balance: number
-  shares: number
+  price: number
+  change: number
+  changePercent: number
 }
 
-interface Order {
-  id: string
-  playerId: string
-  type: "buy" | "sell"
-  price: number
-  quantity: number
-  round: number
+interface Holding {
+  symbol: string
+  name: string
+  shares: number
+  avgPrice: number
+  currentPrice: number
+  totalValue: number
+  gainLoss: number
+  gainLossPercent: number
 }
 
 interface Trade {
   id: string
-  buyerId: string
-  sellerId: string
+  symbol: string
+  type: "BUY" | "SELL"
+  shares: number
   price: number
-  quantity: number
-  round: number
+  total: number
+  timestamp: Date
+  status: "COMPLETED" | "PENDING" | "CANCELLED"
 }
 
-interface GameState {
-  players: Player[]
-  orders: Order[]
-  trades: Trade[]
-  currentPrice: number
-  priceHistory: { name: string; value: number }[]
-  currentRound: number
-  gameStatus: "waiting" | "active" | "finished"
-  roundDuration: number
-  roundEndTime: number | null
-}
+const mockStocks: Stock[] = [
+  { symbol: "AAPL", name: "Apple Inc.", price: 175.43, change: 2.15, changePercent: 1.24 },
+  { symbol: "GOOGL", name: "Alphabet Inc.", price: 142.56, change: -1.23, changePercent: -0.85 },
+  { symbol: "MSFT", name: "Microsoft Corp.", price: 378.85, change: 5.67, changePercent: 1.52 },
+  { symbol: "TSLA", name: "Tesla Inc.", price: 248.42, change: -8.34, changePercent: -3.25 },
+  { symbol: "AMZN", name: "Amazon.com Inc.", price: 145.78, change: 3.21, changePercent: 2.25 },
+]
 
 export default function TradingSimulation() {
-  const [playerName, setPlayerName] = useState("")
-  const [gameId, setGameId] = useState("")
-  const [playerId, setPlayerId] = useState<string | null>(null)
-  const [orderType, setOrderType] = useState<"buy" | "sell">("buy")
-  const [orderPrice, setOrderPrice] = useState<number>(0)
-  const [orderQuantity, setOrderQuantity] = useState<number>(0)
-  const { toast } = useToast()
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [user, setUser] = useState({ name: "", balance: 10000 })
+  const [stocks, setStocks] = useState<Stock[]>(mockStocks)
+  const [holdings, setHoldings] = useState<Holding[]>([])
+  const [trades, setTrades] = useState<Trade[]>([])
+  const [selectedStock, setSelectedStock] = useState<Stock | null>(null)
+  const [orderType, setOrderType] = useState<"BUY" | "SELL">("BUY")
+  const [orderShares, setOrderShares] = useState("")
+  const [orderPrice, setOrderPrice] = useState("")
 
-  const { sendMessage, lastMessage, isConnected } = useWebSocket(gameId, playerId)
-  const { gameState, setGameState, resetGameState } = useGameState()
-
+  // Simulate real-time price updates
   useEffect(() => {
-    if (lastMessage) {
-      try {
-        const data = JSON.parse(lastMessage.data)
-        if (data.type === "game_state") {
-          setGameState(data.payload)
-        } else if (data.type === "player_id") {
-          setPlayerId(data.payload.playerId)
-          toast({
-            title: "Joined Game",
-            description: `You are player ${data.payload.playerId}`,
-          })
-        } else if (data.type === "error") {
-          toast({
-            title: "Error",
-            description: data.payload.message,
-            variant: "destructive",
-          })
-        } else if (data.type === "notification") {
-          toast({
-            title: "Notification",
-            description: data.payload.message,
-          })
-        }
-      } catch (error) {
-        console.error("Failed to parse WebSocket message:", error)
-      }
-    }
-  }, [lastMessage, setGameState, toast])
+    if (!isLoggedIn) return
 
-  const handleCreateGame = useCallback(() => {
-    if (!playerName) {
-      toast({
-        title: "Error",
-        description: "Please enter your name to create a game.",
-        variant: "destructive",
-      })
-      return
-    }
-    const newGameId = Math.random().toString(36).substring(2, 8)
-    setGameId(newGameId)
-    sendMessage(JSON.stringify({ type: "create_game", payload: { gameId: newGameId, playerName } }))
-    resetGameState() // Reset game state when creating a new game
-  }, [playerName, sendMessage, resetGameState, toast])
+    const interval = setInterval(() => {
+      setStocks((prevStocks) =>
+        prevStocks.map((stock) => {
+          const changePercent = (Math.random() - 0.5) * 0.1 // Random change between -5% and 5%
+          const newPrice = stock.price * (1 + changePercent)
+          const change = newPrice - stock.price
 
-  const handleJoinGame = useCallback(() => {
-    if (!playerName || !gameId) {
-      toast({
-        title: "Error",
-        description: "Please enter your name and Game ID to join a game.",
-        variant: "destructive",
-      })
-      return
-    }
-    sendMessage(JSON.stringify({ type: "join_game", payload: { gameId, playerName } }))
-  }, [playerName, gameId, sendMessage, toast])
-
-  const handleStartGame = useCallback(() => {
-    if (gameId && playerId) {
-      sendMessage(JSON.stringify({ type: "start_game", payload: { gameId, playerId } }))
-    }
-  }, [gameId, playerId, sendMessage])
-
-  const handleSubmitOrder = useCallback(() => {
-    if (gameId && playerId && orderPrice > 0 && orderQuantity > 0) {
-      sendMessage(
-        JSON.stringify({
-          type: "submit_order",
-          payload: {
-            gameId,
-            playerId,
-            orderType,
-            price: orderPrice,
-            quantity: orderQuantity,
-          },
+          return {
+            ...stock,
+            price: Number(newPrice.toFixed(2)),
+            change: Number(change.toFixed(2)),
+            changePercent: Number((changePercent * 100).toFixed(2)),
+          }
         }),
       )
-      setOrderPrice(0)
-      setOrderQuantity(0)
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [isLoggedIn])
+
+  // Update holdings when stock prices change
+  useEffect(() => {
+    setHoldings((prevHoldings) =>
+      prevHoldings.map((holding) => {
+        const currentStock = stocks.find((s) => s.symbol === holding.symbol)
+        if (!currentStock) return holding
+
+        const totalValue = holding.shares * currentStock.price
+        const gainLoss = totalValue - holding.shares * holding.avgPrice
+        const gainLossPercent = (gainLoss / (holding.shares * holding.avgPrice)) * 100
+
+        return {
+          ...holding,
+          currentPrice: currentStock.price,
+          totalValue: Number(totalValue.toFixed(2)),
+          gainLoss: Number(gainLoss.toFixed(2)),
+          gainLossPercent: Number(gainLossPercent.toFixed(2)),
+        }
+      }),
+    )
+  }, [stocks])
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (username && password) {
+      setUser({ name: username, balance: 10000 })
+      setIsLoggedIn(true)
+      // Initialize with some sample holdings
+      setHoldings([
+        {
+          symbol: "AAPL",
+          name: "Apple Inc.",
+          shares: 10,
+          avgPrice: 170.0,
+          currentPrice: 175.43,
+          totalValue: 1754.3,
+          gainLoss: 54.3,
+          gainLossPercent: 3.19,
+        },
+      ])
+    }
+  }
+
+  const handleLogout = () => {
+    setIsLoggedIn(false)
+    setUsername("")
+    setPassword("")
+    setUser({ name: "", balance: 0 })
+    setHoldings([])
+    setTrades([])
+  }
+
+  const handleStockSelect = (symbol: string) => {
+    const stock = stocks.find((s) => s.symbol === symbol)
+    setSelectedStock(stock || null)
+    setOrderPrice(stock?.price.toString() || "")
+  }
+
+  const handlePlaceOrder = () => {
+    if (!selectedStock || !orderShares || !orderPrice) return
+
+    const shares = Number.parseInt(orderShares)
+    const price = Number.parseFloat(orderPrice)
+    const total = shares * price
+
+    if (orderType === "BUY" && total > user.balance) {
+      alert("Insufficient funds!")
+      return
+    }
+
+    const existingHolding = holdings.find((h) => h.symbol === selectedStock.symbol)
+
+    if (orderType === "SELL" && (!existingHolding || existingHolding.shares < shares)) {
+      alert("Insufficient shares!")
+      return
+    }
+
+    // Create trade record
+    const newTrade: Trade = {
+      id: Date.now().toString(),
+      symbol: selectedStock.symbol,
+      type: orderType,
+      shares,
+      price,
+      total,
+      timestamp: new Date(),
+      status: "COMPLETED",
+    }
+
+    setTrades((prev) => [newTrade, ...prev])
+
+    // Update balance
+    if (orderType === "BUY") {
+      setUser((prev) => ({ ...prev, balance: prev.balance - total }))
     } else {
-      toast({
-        title: "Error",
-        description: "Please enter a valid price and quantity for your order.",
-        variant: "destructive",
-      })
+      setUser((prev) => ({ ...prev, balance: prev.balance + total }))
     }
-  }, [gameId, playerId, orderType, orderPrice, orderQuantity, sendMessage, toast])
 
-  const handleEndRound = useCallback(() => {
-    if (gameId && playerId) {
-      sendMessage(JSON.stringify({ type: "end_round", payload: { gameId, playerId } }))
+    // Update holdings
+    if (orderType === "BUY") {
+      if (existingHolding) {
+        const newShares = existingHolding.shares + shares
+        const newAvgPrice = (existingHolding.shares * existingHolding.avgPrice + total) / newShares
+
+        setHoldings((prev) =>
+          prev.map((h) =>
+            h.symbol === selectedStock.symbol
+              ? { ...h, shares: newShares, avgPrice: Number(newAvgPrice.toFixed(2)) }
+              : h,
+          ),
+        )
+      } else {
+        const newHolding: Holding = {
+          symbol: selectedStock.symbol,
+          name: selectedStock.name,
+          shares,
+          avgPrice: price,
+          currentPrice: selectedStock.price,
+          totalValue: shares * selectedStock.price,
+          gainLoss: 0,
+          gainLossPercent: 0,
+        }
+        setHoldings((prev) => [...prev, newHolding])
+      }
+    } else {
+      if (existingHolding) {
+        const newShares = existingHolding.shares - shares
+        if (newShares === 0) {
+          setHoldings((prev) => prev.filter((h) => h.symbol !== selectedStock.symbol))
+        } else {
+          setHoldings((prev) => prev.map((h) => (h.symbol === selectedStock.symbol ? { ...h, shares: newShares } : h)))
+        }
+      }
     }
-  }, [gameId, playerId, sendMessage])
 
-  const currentPlayer = gameState?.players?.find((p) => p.id === playerId)
+    // Reset form
+    setOrderShares("")
+    setOrderPrice(selectedStock.price.toString())
+  }
+
+  const totalPortfolioValue = holdings.reduce((sum, holding) => sum + holding.totalValue, 0)
+  const totalGainLoss = holdings.reduce((sum, holding) => sum + holding.gainLoss, 0)
+  const totalGainLossPercent =
+    totalPortfolioValue > 0 ? (totalGainLoss / (totalPortfolioValue - totalGainLoss)) * 100 : 0
+
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl font-bold">Trading Simulator</CardTitle>
+            <p className="text-muted-foreground">Sign in to start trading</p>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter username"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full">
+                Sign In
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-100 dark:bg-gray-900 p-4">
-      <header className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 shadow rounded-lg mb-4">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Trading Simulation</h1>
-        <div className="flex items-center space-x-4">
-          <span className="text-gray-700 dark:text-gray-300">Status: {isConnected ? "Connected" : "Disconnected"}</span>
-          {playerId && <span className="text-gray-700 dark:text-gray-300">Player ID: {playerId}</span>}
-          {gameId && <span className="text-gray-700 dark:text-gray-300">Game ID: {gameId}</span>}
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b px-6 py-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Trading Simulator</h1>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">Welcome, {user.name}</span>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
+            </Button>
+          </div>
         </div>
       </header>
 
-      {!playerId ? (
-        <Card className="w-full max-w-md mx-auto">
-          <CardHeader>
-            <CardTitle>Join or Create Game</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input placeholder="Enter your name" value={playerName} onChange={(e) => setPlayerName(e.target.value)} />
-            <div className="flex space-x-2">
-              <Button onClick={handleCreateGame} className="flex-1">
-                Create New Game
-              </Button>
-            </div>
-            <div className="relative flex items-center">
-              <div className="flex-grow border-t border-gray-300 dark:border-gray-700" />
-              <span className="flex-shrink mx-4 text-gray-500 dark:text-gray-400">OR</span>
-              <div className="flex-grow border-t border-gray-300 dark:border-gray-700" />
-            </div>
-            <Input placeholder="Enter Game ID to Join" value={gameId} onChange={(e) => setGameId(e.target.value)} />
-            <Button onClick={handleJoinGame} className="w-full">
-              Join Game
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-          <div className="lg:col-span-2 space-y-4">
+      <div className="p-6">
+        {/* Account Summary */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Cash Balance</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">${user.balance.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Portfolio Value</CardTitle>
+              <PieChart className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">${totalPortfolioValue.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total P&L</CardTitle>
+              {totalGainLoss >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-green-600" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-red-600" />
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-bold ${totalGainLoss >= 0 ? "text-green-600" : "text-red-600"}`}>
+                ${totalGainLoss.toLocaleString()}
+              </div>
+              <p className={`text-xs ${totalGainLoss >= 0 ? "text-green-600" : "text-red-600"}`}>
+                {totalGainLossPercent.toFixed(2)}%
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Value</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">${(user.balance + totalPortfolioValue).toLocaleString()}</div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Market Data & Order Entry */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Market Data */}
             <Card>
               <CardHeader>
-                <CardTitle>Game State</CardTitle>
+                <CardTitle>Market Data</CardTitle>
               </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Current Round</p>
-                  <p className="text-lg font-semibold">{gameState?.currentRound}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Current Price</p>
-                  <p className="text-lg font-semibold">{gameState?.currentPrice}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Game Status</p>
-                  <p className="text-lg font-semibold">{gameState?.gameStatus}</p>
-                </div>
-                {gameState?.roundEndTime && (
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Round Ends In</p>
-                    <p className="text-lg font-semibold">
-                      {Math.max(0, Math.ceil((gameState.roundEndTime - Date.now()) / 1000))}s
-                    </p>
-                  </div>
-                )}
-                <div className="col-span-2">
-                  {gameState?.gameStatus === "waiting" && (
-                    <Button onClick={handleStartGame} className="w-full">
-                      Start Game
-                    </Button>
-                  )}
-                  {gameState?.gameStatus === "active" && (
-                    <Button onClick={handleEndRound} className="w-full bg-transparent" variant="outline">
-                      End Round
-                    </Button>
-                  )}
-                </div>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Symbol</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Change</TableHead>
+                      <TableHead>Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stocks.map((stock) => (
+                      <TableRow key={stock.symbol}>
+                        <TableCell className="font-medium">{stock.symbol}</TableCell>
+                        <TableCell>{stock.name}</TableCell>
+                        <TableCell>${stock.price.toFixed(2)}</TableCell>
+                        <TableCell>
+                          <div className={`flex items-center ${stock.change >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {stock.change >= 0 ? (
+                              <TrendingUp className="w-4 h-4 mr-1" />
+                            ) : (
+                              <TrendingDown className="w-4 h-4 mr-1" />
+                            )}
+                            ${stock.change.toFixed(2)} ({stock.changePercent.toFixed(2)}%)
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="outline" onClick={() => handleStockSelect(stock.symbol)}>
+                            Trade
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
 
+            {/* Holdings */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Holdings</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {holdings.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">No holdings yet</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Symbol</TableHead>
+                        <TableHead>Shares</TableHead>
+                        <TableHead>Avg Price</TableHead>
+                        <TableHead>Current Price</TableHead>
+                        <TableHead>Total Value</TableHead>
+                        <TableHead>P&L</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {holdings.map((holding) => (
+                        <TableRow key={holding.symbol}>
+                          <TableCell className="font-medium">{holding.symbol}</TableCell>
+                          <TableCell>{holding.shares}</TableCell>
+                          <TableCell>${holding.avgPrice.toFixed(2)}</TableCell>
+                          <TableCell>${holding.currentPrice.toFixed(2)}</TableCell>
+                          <TableCell>${holding.totalValue.toLocaleString()}</TableCell>
+                          <TableCell>
+                            <div className={holding.gainLoss >= 0 ? "text-green-600" : "text-red-600"}>
+                              ${holding.gainLoss.toFixed(2)} ({holding.gainLossPercent.toFixed(2)}%)
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Order Entry & Trade History */}
+          <div className="space-y-6">
+            {/* Order Entry */}
             <Card>
               <CardHeader>
                 <CardTitle>Place Order</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex space-x-2">
-                  <Button
-                    variant={orderType === "buy" ? "default" : "outline"}
-                    onClick={() => setOrderType("buy")}
-                    className="flex-1"
-                  >
-                    Buy
-                  </Button>
-                  <Button
-                    variant={orderType === "sell" ? "default" : "outline"}
-                    onClick={() => setOrderType("sell")}
-                    className="flex-1"
-                  >
-                    Sell
-                  </Button>
+                <div className="space-y-2">
+                  <Label>Stock</Label>
+                  <Select onValueChange={handleStockSelect}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a stock" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stocks.map((stock) => (
+                        <SelectItem key={stock.symbol} value={stock.symbol}>
+                          {stock.symbol} - ${stock.price.toFixed(2)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Input
-                  type="number"
-                  placeholder="Price"
-                  value={orderPrice === 0 ? "" : orderPrice}
-                  onChange={(e) => setOrderPrice(Number.parseInt(e.target.value) || 0)}
-                />
-                <Input
-                  type="number"
-                  placeholder="Quantity"
-                  value={orderQuantity === 0 ? "" : orderQuantity}
-                  onChange={(e) => setOrderQuantity(Number.parseInt(e.target.value) || 0)}
-                />
-                <Button onClick={handleSubmitOrder} className="w-full">
-                  Submit Order
-                </Button>
+
+                {selectedStock && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Order Type</Label>
+                      <Select value={orderType} onValueChange={(value: "BUY" | "SELL") => setOrderType(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="BUY">Buy</SelectItem>
+                          <SelectItem value="SELL">Sell</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Shares</Label>
+                      <Input
+                        type="number"
+                        value={orderShares}
+                        onChange={(e) => setOrderShares(e.target.value)}
+                        placeholder="Number of shares"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Price per Share</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={orderPrice}
+                        onChange={(e) => setOrderPrice(e.target.value)}
+                        placeholder="Price per share"
+                      />
+                    </div>
+
+                    {orderShares && orderPrice && (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm">
+                          <strong>
+                            Total: ${(Number.parseInt(orderShares) * Number.parseFloat(orderPrice)).toFixed(2)}
+                          </strong>
+                        </p>
+                      </div>
+                    )}
+
+                    <Button
+                      onClick={handlePlaceOrder}
+                      className="w-full"
+                      variant={orderType === "BUY" ? "default" : "destructive"}
+                    >
+                      {orderType} {selectedStock.symbol}
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
 
+            {/* Trade History */}
             <Card>
               <CardHeader>
-                <CardTitle>Your Portfolio</CardTitle>
+                <CardTitle>Trade History</CardTitle>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Asset</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Balance</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell>Cambridge Mining</TableCell>
-                      <TableCell>{currentPlayer?.shares ?? 0}</TableCell>
-                      <TableCell>${currentPlayer?.balance ?? 0}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <OrderBookDisplay orders={gameState?.orders || []} currentRound={gameState?.currentRound || 0} />
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Price History</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Chart
-                  data={gameState?.priceHistory || []}
-                  title="Cambridge Mining Price Over Time"
-                  description="Historical price movements of Cambridge Mining shares."
-                />
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Players</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Balance</TableHead>
-                      <TableHead>Shares</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {gameState?.players?.map((player) => (
-                      <TableRow key={player.id}>
-                        <TableCell>{player.name}</TableCell>
-                        <TableCell>${player.balance}</TableCell>
-                        <TableCell>{player.shares}</TableCell>
-                      </TableRow>
+                {trades.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">No trades yet</p>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {trades.map((trade) => (
+                      <div key={trade.id} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={trade.type === "BUY" ? "default" : "destructive"}>{trade.type}</Badge>
+                            <span className="font-medium">{trade.symbol}</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {trade.shares} shares @ ${trade.price.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{trade.timestamp.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-medium">${trade.total.toFixed(2)}</p>
+                          <Badge variant="outline" className="text-xs">
+                            {trade.status}
+                          </Badge>
+                        </div>
+                      </div>
                     ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Trades</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Buyer</TableHead>
-                      <TableHead>Seller</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead>Quantity</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {gameState?.trades?.map((trade) => (
-                      <TableRow key={trade.id}>
-                        <TableCell>{gameState.players.find((p) => p.id === trade.buyerId)?.name || "N/A"}</TableCell>
-                        <TableCell>{gameState.players.find((p) => p.id === trade.sellerId)?.name || "N/A"}</TableCell>
-                        <TableCell>${trade.price}</TableCell>
-                        <TableCell>{trade.quantity}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }

@@ -1,76 +1,100 @@
-"use client"
-
-import { useEffect, useRef, useState, useCallback } from "react"
-
-interface WebSocketMessage {
+export interface GameMessage {
   type: string
-  payload: any
+  gameState?: any
+  [key: string]: any
 }
 
-export function useWebSocket(gameId: string | null, playerId: string | null) {
-  const ws = useRef<WebSocket | null>(null)
-  const [isConnected, setIsConnected] = useState(false)
-  const [lastMessage, setLastMessage] = useState<MessageEvent | null>(null)
+export class GameWebSocket {
+  private ws: WebSocket | null = null
+  private gameId: string
+  private messageHandlers: ((message: GameMessage) => void)[] = []
+  private reconnectAttempts = 0
+  private maxReconnectAttempts = 5
+  private reconnectDelay = 1000
 
-  const getWebSocketUrl = useCallback(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const host = process.env.NEXT_PUBLIC_WS_URL || window.location.host
-    return `${protocol}//${host}/ws/${gameId}`
-  }, [gameId])
+  constructor(gameId: string) {
+    this.gameId = gameId
+  }
 
-  useEffect(() => {
-    if (!gameId || !playerId) {
-      if (ws.current) {
-        ws.current.close()
-        ws.current = null
+  async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        // Use environment variable or fallback to fly.dev
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "wss://trade-simulation-game.fly.dev"
+        const fullUrl = `${wsUrl}/ws/${this.gameId}`
+
+        console.log("Connecting to WebSocket:", fullUrl)
+
+        this.ws = new WebSocket(fullUrl)
+
+        this.ws.onopen = () => {
+          console.log("WebSocket connected successfully")
+          this.reconnectAttempts = 0
+          resolve()
+        }
+
+        this.ws.onmessage = (event) => {
+          try {
+            const message: GameMessage = JSON.parse(event.data)
+            this.messageHandlers.forEach((handler) => handler(message))
+          } catch (error) {
+            console.error("Error parsing WebSocket message:", error)
+          }
+        }
+
+        this.ws.onclose = (event) => {
+          console.log("WebSocket connection closed:", event.code, event.reason)
+          this.attemptReconnect()
+        }
+
+        this.ws.onerror = (error) => {
+          console.error("WebSocket error:", error)
+          reject(error)
+        }
+
+        // Connection timeout
+        setTimeout(() => {
+          if (this.ws?.readyState !== WebSocket.OPEN) {
+            reject(new Error("WebSocket connection timeout"))
+          }
+        }, 10000)
+      } catch (error) {
+        reject(error)
       }
-      setIsConnected(false)
-      return
-    }
+    })
+  }
 
-    const url = getWebSocketUrl()
-    console.log(`Attempting to connect to WebSocket: ${url}`)
+  private attemptReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++
+      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
 
-    ws.current = new WebSocket(url)
-
-    ws.current.onopen = () => {
-      console.log("WebSocket connected")
-      setIsConnected(true)
-      // Send player ID upon connection if it's a reconnection
-      if (playerId) {
-        sendMessage(JSON.stringify({ type: "reconnect", payload: { gameId, playerId } }))
-      }
-    }
-
-    ws.current.onmessage = (event) => {
-      setLastMessage(event)
-    }
-
-    ws.current.onclose = () => {
-      console.log("WebSocket disconnected")
-      setIsConnected(false)
-      // Implement reconnection logic if needed
-    }
-
-    ws.current.onerror = (error) => {
-      console.error("WebSocket error:", error)
-      setIsConnected(false)
-    }
-
-    return () => {
-      if (ws.current) {
-        ws.current.close()
-      }
-    }
-  }, [gameId, playerId, getWebSocketUrl])
-
-  const sendMessage = useCallback((message: string) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(message)
+      setTimeout(() => {
+        this.connect().catch((error) => {
+          console.error("Reconnection failed:", error)
+        })
+      }, this.reconnectDelay * this.reconnectAttempts)
     } else {
-      console.warn("WebSocket is not open. Message not sent:", message)
+      console.error("Max reconnection attempts reached")
     }
-  }, [])
+  }
 
-  return { sendMessage, lastMessage, isConnected }
+  sendMessage(message: any) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message))
+    } else {
+      console.error("WebSocket is not connected")
+    }
+  }
+
+  onMessage(handler: (message: GameMessage) => void) {
+    this.messageHandlers.push(handler)
+  }
+
+  disconnect() {
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
+    }
+  }
 }

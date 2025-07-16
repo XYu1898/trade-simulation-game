@@ -1,13 +1,365 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-import json
 import asyncio
+import json
+import logging
 import random
 import time
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+import websockets
+from websockets.server import WebSocketServerProtocol
+import uvicorn
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Game state types
+class Player:
+    def __init__(self, player_id: str, name: str, is_monitor: bool = False, is_market_maker: bool = False):
+        self.id = player_id
+        self.name = name
+        self.cash = 100000 if is_market_maker else 10000
+        self.cambridge_shares = 1000 if is_market_maker else 0
+        self.total_value = self.cash
+        self.is_monitor = is_monitor
+        self.is_market_maker = is_market_maker
+        self.orders_submitted = 0
+        self.is_done = False
+        self.is_online = True
+        self.rank = None
+
+class Order:
+    def __init__(self, order_id: str, player_id: str, player_name: str, stock: str, 
+                 order_type: str, price: float, quantity: int, round_num: int):
+        self.id = order_id
+        self.player_id = player_id
+        self.player_name = player_name
+        self.stock = stock
+        self.type = order_type
+        self.price = price
+        self.quantity = quantity
+        self.round = round_num
+        self.status = "PENDING"
+        self.filled_quantity = 0
+
+class Trade:
+    def __init__(self, trade_id: str, stock: str, price: float, quantity: int, 
+                 buyer_id: str, seller_id: str, round_num: int):
+        self.id = trade_id
+        self.stock = stock
+        self.price = price
+        self.quantity = quantity
+        self.buyer_id = buyer_id
+        self.seller_id = seller_id
+        self.round = round_num
+
+class PricePoint:
+    def __init__(self, day: int, camb_price: float, 
+                 round_num: Optional[int] = None, is_trade_day: bool = False):
+        self.day = day
+        self.cambridge_mining = camb_price
+        self.round = round_num
+        self.is_trade_day = is_trade_day
+
+class GameState:
+    def __init__(self):
+        self.current_round = 1
+        self.phase = "LOBBY"  # LOBBY, SETUP, TRADING, PROCESSING, RESULTS, FINISHED
+        self.players: Dict[str, Player] = {}
+        self.orders: List[Order] = []
+        self.trades: List[Trade] = []
+        self.price_history: List[PricePoint] = []
+        self.current_prices = {"CAMB": 0.0}
+        self.game_started = False
+        self.websockets: Dict[str, WebSocket] = {}
+        
+        # Initialize with market makers and price history
+        self._create_market_makers()
+        self._generate_price_history()
+
+    def _create_market_makers(self):
+        """Create AI market makers"""
+        mm_names = ["Goldman MM", "Morgan MM", "Citadel MM", "Jane Street MM", "Virtu MM"]
+        for i, name in enumerate(mm_names):
+            mm_id = f"mm{i+1}"
+            self.players[mm_id] = Player(mm_id, name, is_market_maker=True)
+
+    def _generate_price_history(self):
+        """Generate synthetic price history for 10 days with V-shape recovery"""
+        # Start at a high price
+        start_price = 75.0
+        
+        # Create V-shape: decline for first 5 days, then recover for next 5 days
+        prices = []
+        
+        # Decline phase (days 1-5)
+        current_price = start_price
+        for day in range(1, 6):
+            # Steep decline with some volatility
+            decline = random.uniform(8, 12)  # 8-12% decline per day
+            volatility = random.uniform(-2, 2)  # Add some noise
+            current_price = current_price * (1 - decline/100 + volatility/100)
+            current_price = max(30, current_price)  # Don't go below $30
+            prices.append((day, round(current_price, 2)))
+        
+        # Recovery phase (days 6-10)
+        for day in range(6, 11):
+            # Strong recovery with volatility
+            recovery = random.uniform(10, 15)  # 10-15% recovery per day
+            volatility = random.uniform(-3, 3)  # Add some noise
+            current_price = current_price * (1 + recovery/100 + volatility/100)
+            current_price = min(100, current_price)  # Cap at $100
+            prices.append((day, round(current_price, 2)))
+        
+        # Create price history
+        for day, price in prices:
+            self.price_history.append(PricePoint(day, price))
+        
+        # Set current price from last day
+        self.current_prices = {"CAMB": prices[-1][1]}
+
+    def add_player(self, player_id: str, name: str, is_monitor: bool = False):
+        """Add a new player to the game"""
+        self.players[player_id] = Player(player_id, name, is_monitor)
+        logger.info(f"Player {name} ({'Monitor' if is_monitor else 'Player'}) joined the game")
+
+    def add_websocket(self, player_id: str, websocket: WebSocket):
+        """Associate a websocket with a player"""
+        self.websockets[player_id] = websocket
+
+    def remove_websocket(self, player_id: str):
+        """Remove websocket association"""
+        if player_id in self.websockets:
+            del self.websockets[player_id]
+
+    def get_human_players(self) -> List[Player]:
+        """Get all human players (non-market makers)"""
+        return [p for p in self.players.values() if not p.is_market_maker]
+
+    def can_process_round(self) -> bool:
+        """Check if round can be processed (all human players done or max orders)"""
+        human_players = self.get_human_players()
+        non_monitor_players = [p for p in human_players if not p.is_monitor]
+        return all(p.is_done or p.orders_submitted >= 2 for p in non_monitor_players)
+
+    def force_close_orders(self):
+        """Force close order submission for all players"""
+        for player in self.players.values():
+            if not player.is_market_maker:
+                player.is_done = True
+
+    def generate_market_maker_orders(self) -> List[Order]:
+        """Generate orders for market makers"""
+        mm_orders = []
+        
+        for player in self.players.values():
+            if not player.is_market_maker or player.is_done:
+                continue
+                
+            # Market makers place 2-4 orders
+            orders_to_place = random.randint(2, min(4, 5 - player.orders_submitted))
+            
+            for i in range(orders_to_place):
+                current_price = self.current_prices["CAMB"]
+                order_type = random.choice(["BUY", "SELL"])
+                
+                # Market makers quote around current price
+                if order_type == "BUY":
+                    price = current_price * (0.97 + random.random() * 0.02)  # 97-99% of current price
+                else:
+                    price = current_price * (1.01 + random.random() * 0.02)  # 101-103% of current price
+                
+                price = round(price, 2)
+                quantity = random.randint(50, 150)
+                
+                # Check if MM can place this order
+                can_place = True
+                if order_type == "BUY":
+                    can_place = player.cash >= price * quantity
+                else:
+                    can_place = player.cambridge_shares >= quantity
+                
+                if can_place:
+                    order_id = f"{player.id}-CAMB-{int(time.time())}-{i}"
+                    order = Order(order_id, player.id, player.name, "CAMB", 
+                                order_type, price, quantity, self.current_round)
+                    mm_orders.append(order)
+                    player.orders_submitted += 1
+            
+            player.is_done = True
+        
+        return mm_orders
+
+    def process_orders(self) -> List[Trade]:
+        """Process all pending orders and execute trades"""
+        trades = []
+        
+        # Get CAMB orders
+        camb_buys = [o for o in self.orders if o.stock == "CAMB" and o.type == "BUY" and o.status == "PENDING"]
+        camb_sells = [o for o in self.orders if o.stock == "CAMB" and o.type == "SELL" and o.status == "PENDING"]
+        
+        # Sort orders (best prices first)
+        camb_buys.sort(key=lambda x: x.price, reverse=True)
+        camb_sells.sort(key=lambda x: x.price)
+        
+        # Match orders
+        trades.extend(self._match_orders(camb_buys, camb_sells, "CAMB"))
+        
+        return trades
+
+    def _match_orders(self, buy_orders: List[Order], sell_orders: List[Order], stock: str) -> List[Trade]:
+        """Match buy and sell orders for a specific stock"""
+        trades = []
+        buy_idx = 0
+        sell_idx = 0
+        
+        while buy_idx < len(buy_orders) and sell_idx < len(sell_orders):
+            buy_order = buy_orders[buy_idx]
+            sell_order = sell_orders[sell_idx]
+            
+            if buy_order.price >= sell_order.price:
+                # Execute trade
+                trade_price = sell_order.price
+                trade_quantity = min(buy_order.quantity, sell_order.quantity)
+                
+                trade_id = f"trade-{int(time.time())}-{random.randint(1000, 9999)}"
+                trade = Trade(trade_id, stock, trade_price, trade_quantity,
+                            buy_order.player_id, sell_order.player_id, self.current_round)
+                trades.append(trade)
+                
+                # Update order quantities
+                buy_order.quantity -= trade_quantity
+                sell_order.quantity -= trade_quantity
+                buy_order.filled_quantity += trade_quantity
+                sell_order.filled_quantity += trade_quantity
+                
+                # Update order status
+                if buy_order.quantity == 0:
+                    buy_order.status = "FILLED"
+                else:
+                    buy_order.status = "PARTIAL"
+                    
+                if sell_order.quantity == 0:
+                    sell_order.status = "FILLED"
+                else:
+                    sell_order.status = "PARTIAL"
+                
+                # Move to next order if fully filled
+                if buy_order.quantity == 0:
+                    buy_idx += 1
+                if sell_order.quantity == 0:
+                    sell_idx += 1
+            else:
+                sell_idx += 1
+        
+        return trades
+
+    def update_player_portfolios(self, trades: List[Trade]):
+        """Update player portfolios based on executed trades"""
+        for trade in trades:
+            buyer = self.players.get(trade.buyer_id)
+            seller = self.players.get(trade.seller_id)
+            
+            if buyer and seller:
+                total_cost = trade.price * trade.quantity
+                
+                # Update buyer
+                buyer.cash -= total_cost
+                buyer.cambridge_shares += trade.quantity
+                
+                # Update seller
+                seller.cash += total_cost
+                seller.cambridge_shares -= trade.quantity
+
+    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, float]:
+        """Calculate new prices based on executed trades"""
+        new_prices = self.current_prices.copy()
+        
+        # Calculate volume-weighted average price for CAMB
+        camb_trades = [t for t in trades if t.stock == "CAMB"]
+        if camb_trades:
+            total_volume = sum(t.quantity for t in camb_trades)
+            total_value = sum(t.price * t.quantity for t in camb_trades)
+            new_prices["CAMB"] = round(total_value / total_volume, 2)
+        
+        return new_prices
+
+    def update_total_values(self):
+        """Update total portfolio values for all players"""
+        for player in self.players.values():
+            player.total_value = (player.cash + 
+                                player.cambridge_shares * self.current_prices["CAMB"])
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert game state to dictionary for JSON serialization"""
+        return {
+            "currentRound": self.current_round,
+            "phase": self.phase,
+            "players": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "cash": p.cash,
+                    "cambridgeShares": p.cambridge_shares,
+                    "totalValue": p.total_value,
+                    "rank": p.rank,
+                    "isMarketMaker": p.is_market_maker,
+                    "isMonitor": p.is_monitor,
+                    "ordersSubmitted": p.orders_submitted,
+                    "isDone": p.is_done,
+                    "isOnline": p.is_online
+                }
+                for p in self.players.values()
+            ],
+            "orders": [
+                {
+                    "id": o.id,
+                    "playerId": o.player_id,
+                    "playerName": o.player_name,
+                    "stock": o.stock,
+                    "type": o.type,
+                    "price": o.price,
+                    "quantity": o.quantity,
+                    "round": o.round,
+                    "status": o.status,
+                    "filledQuantity": o.filled_quantity
+                }
+                for o in self.orders
+            ],
+            "trades": [
+                {
+                    "id": t.id,
+                    "stock": t.stock,
+                    "price": t.price,
+                    "quantity": t.quantity,
+                    "buyerId": t.buyer_id,
+                    "sellerId": t.seller_id,
+                    "round": t.round
+                }
+                for t in self.trades
+            ],
+            "priceHistory": [
+                {
+                    "day": p.day,
+                    "round": p.round,
+                    "cambridgeMining": p.cambridge_mining,
+                    "isTradeDay": p.is_trade_day
+                }
+                for p in self.price_history
+            ],
+            "currentPrices": self.current_prices,
+            "gameStarted": self.game_started
+        }
+
+# Global game state
+game_state = GameState()
+
+# FastAPI app
 app = FastAPI()
 
-# Allow all origins for simplicity in development
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,325 +368,185 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage for game states and connected players
-games = {}  # game_id -> GameState
-player_connections = {} # player_id -> WebSocket
-
-class GameState:
-    def __init__(self, game_id: str, initial_player_name: str):
-        self.game_id = game_id
-        self.players = {
-            f"player-{random.randint(1000, 9999)}": {
-                "name": initial_player_name,
-                "balance": 10000,
-                "shares": 0,
-            }
-        }
-        self.orders = []
-        self.trades = []
-        self.current_price = 100
-        self.price_history = [{"name": "Day 1", "value": 100}]
-        self.current_round = 1
-        self.game_status = "waiting"  # waiting, active, finished
-        self.round_duration = 30  # seconds
-        self.round_end_time = None
-        self.round_timer_task = None
-        self.market_maker_id = "market_maker"
-        self.players[self.market_maker_id] = {"name": "Market Maker", "balance": float('inf'), "shares": float('inf')}
-
-    def to_dict(self):
-        return {
-            "gameId": self.game_id,
-            "players": list(self.players.values()),
-            "orders": self.orders,
-            "trades": self.trades,
-            "currentPrice": self.current_price,
-            "priceHistory": self.price_history,
-            "currentRound": self.current_round,
-            "gameStatus": self.game_status,
-            "roundDuration": self.round_duration,
-            "roundEndTime": self.round_end_time,
-        }
-
-async def broadcast_game_state(game_id: str):
-    game = games.get(game_id)
-    if not game:
+async def broadcast_game_update():
+    """Broadcast game state update to all connected clients"""
+    if not game_state.websockets:
         return
-
-    state_to_send = game.to_dict()
-    for player_id, player_data in game.players.items():
-        if player_id != game.market_maker_id: # Don't send to market maker's non-existent WS
-            ws = player_connections.get(player_id)
-            if ws:
-                try:
-                    await ws.send_json({"type": "game_state", "payload": state_to_send})
-                except RuntimeError as e:
-                    print(f"Error sending to player {player_id}: {e}")
-                    # Consider removing disconnected player or marking them offline
-
-async def start_round_timer(game_id: str):
-    game = games.get(game_id)
-    if not game:
-        return
-
-    game.round_end_time = int(time.time() * 1000) + game.round_duration * 1000
-    await broadcast_game_state(game_id)
-
-    # Market maker places orders at the start of the round
-    await place_market_maker_orders(game_id)
-
-    await asyncio.sleep(game.round_duration)
-    await process_round(game_id)
-
-async def place_market_maker_orders(game_id: str):
-    game = games.get(game_id)
-    if not game:
-        return
-
-    current_price = game.current_price
-    # Ensure bid and ask prices are integers and within +/- 5 range
-    bid_price = max(1, current_price - random.randint(1, 5))
-    ask_price = current_price + random.randint(1, 5)
-    quantity = random.randint(1, 10) # 1 to 10 shares
-
-    # Market maker buy order
-    game.orders.append({
-        "id": f"order-mm-buy-{int(time.time() * 1000)}",
-        "playerId": game.market_maker_id,
-        "type": "buy",
-        "price": bid_price,
-        "quantity": quantity,
-        "round": game.current_round,
-    })
-
-    # Market maker sell order
-    game.orders.append({
-        "id": f"order-mm-sell-{int(time.time() * 1000)}",
-        "playerId": game.market_maker_id,
-        "type": "sell",
-        "price": ask_price,
-        "quantity": quantity,
-        "round": game.current_round,
-    })
-    await broadcast_game_state(game_id)
-
-
-async def process_round(game_id: str):
-    game = games.get(game_id)
-    if not game:
-        return
-
-    print(f"Processing round {game.current_round} for game {game_id}")
-
-    # Filter orders for the current round and sort them
-    current_round_orders = [order for order in game.orders if order["round"] == game.current_round]
-    buy_orders = sorted([o for o in current_round_orders if o["type"] == "buy"], key=lambda x: x["price"], reverse=True)
-    sell_orders = sorted([o for o in current_round_orders if o["type"] == "sell"], key=lambda x: x["price"])
-
-    new_trades = []
-    executed_price = game.current_price  # Default to current price if no trades
-
-    while buy_orders and sell_orders and buy_orders[0]["price"] >= sell_orders[0]["price"]:
-        buy_order = buy_orders[0]
-        sell_order = sell_orders[0]
-
-        trade_quantity = min(buy_order["quantity"], sell_order["quantity"])
-        trade_price = (buy_order["price"] + sell_order["price"]) / 2
-        
-        # Ensure trade price is an integer
-        trade_price = int(round(trade_price))
-
-        new_trades.append({
-            "id": f"trade-{int(time.time() * 1000)}-{buy_order['id']}-{sell_order['id']}",
-            "buyerId": buy_order["playerId"],
-            "sellerId": sell_order["playerId"],
-            "price": trade_price,
-            "quantity": trade_quantity,
-            "round": game.current_round,
-        })
-
-        # Update player balances and shares
-        buyer_data = game.players.get(buy_order["playerId"])
-        seller_data = game.players.get(sell_order["playerId"])
-
-        if buyer_data and buy_order["playerId"] != game.market_maker_id:
-            buyer_data["balance"] -= trade_price * trade_quantity
-            buyer_data["shares"] += trade_quantity
-        if seller_data and sell_order["playerId"] != game.market_maker_id:
-            seller_data["balance"] += trade_price * trade_quantity
-            seller_data["shares"] -= trade_quantity
-
-        # Update remaining quantities
-        buy_order["quantity"] -= trade_quantity
-        sell_order["quantity"] -= trade_quantity
-
-        # Remove fulfilled orders
-        if buy_order["quantity"] == 0:
-            buy_orders.pop(0)
-        if sell_order["quantity"] == 0:
-            sell_orders.pop(0)
-
-        executed_price = trade_price
-
-    # Update current price based on last trade or average of remaining orders
-    if new_trades:
-        game.current_price = executed_price
-    elif buy_orders and sell_orders:
-        # If no trades, price moves towards the middle of the best bid/ask
-        game.current_price = int(round((buy_orders[0]["price"] + sell_orders[0]["price"]) / 2))
-    else:
-        # If only one side remains, price moves towards that side
-        if buy_orders:
-            game.current_price = int(round(buy_orders[0]["price"] * 0.95))  # Price drops if only buyers
-        elif sell_orders:
-            game.current_price = int(round(sell_orders[0]["price"] * 1.05))  # Price rises if only sellers
     
-    # Ensure price is always positive
-    game.current_price = max(1, game.current_price)
-
-    game.trades.extend(new_trades)
-    game.price_history.append({"name": f"Day {game.current_round + 1}", "value": game.current_price})
-
-    # Clear orders for the next round, keeping only unfulfilled parts if any
-    # This ensures only orders from the current round are processed and displayed
-    game.orders = [order for order in game.orders if order["quantity"] > 0 and order["round"] == game.current_round]
-
-
-    game.current_round += 1
-
-    if game.current_round <= 10:  # Example: run for 10 rounds
-        game.round_timer_task = asyncio.create_task(start_round_timer(game_id))
-    else:
-        game.game_status = "finished"
-        print(f"Game {game_id} finished.")
+    message = {
+        "type": "GAME_UPDATE",
+        "gameState": game_state.to_dict()
+    }
     
-    await broadcast_game_state(game_id)
-
+    # Send to all connected websockets
+    disconnected = []
+    for player_id, websocket in game_state.websockets.items():
+        try:
+            await websocket.send_text(json.dumps(message))
+        except Exception as e:
+            logger.error(f"Error sending to {player_id}: {e}")
+            disconnected.append(player_id)
+    
+    # Clean up disconnected websockets
+    for player_id in disconnected:
+        game_state.remove_websocket(player_id)
 
 @app.websocket("/ws/{game_id}")
 async def websocket_endpoint(websocket: WebSocket, game_id: str):
     await websocket.accept()
     player_id = None
+    
     try:
+        # Send initial game state
+        await websocket.send_text(json.dumps({
+            "type": "GAME_UPDATE",
+            "gameState": game_state.to_dict()
+        }))
+        
         while True:
-            message = await websocket.receive_json()
-            msg_type = message.get("type")
-            payload = message.get("payload")
-
-            if msg_type == "create_game":
-                if game_id in games:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game ID already exists."}})
-                    continue
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            logger.info(f"Received message: {message['type']}")
+            
+            if message["type"] == "PLAYER_JOIN":
+                player_id = message["playerId"]
+                player_name = message["playerName"]
+                is_monitor = message.get("isMonitor", False)
                 
-                new_game = GameState(game_id, payload["playerName"])
-                games[game_id] = new_game
-                player_id = list(new_game.players.keys())[0] # Get the first player ID
-                player_connections[player_id] = websocket
-                await websocket.send_json({"type": "player_id", "payload": {"playerId": player_id}})
-                await broadcast_game_state(game_id)
-                print(f"Game {game_id} created by {payload['playerName']} ({player_id})")
-
-            elif msg_type == "join_game":
-                if game_id not in games:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game ID not found."}})
-                    continue
+                game_state.add_player(player_id, player_name, is_monitor)
+                game_state.add_websocket(player_id, websocket)
                 
-                game = games[game_id]
-                if game.game_status != "waiting":
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game already started or finished."}})
-                    continue
-
-                player_id = f"player-{random.randint(1000, 9999)}"
-                game.players[player_id] = {"name": payload["playerName"], "balance": 10000, "shares": 0}
-                player_connections[player_id] = websocket
-                await websocket.send_json({"type": "player_id", "payload": {"playerId": player_id}})
-                await broadcast_game_state(game_id)
-                print(f"{payload['playerName']} ({player_id}) joined game {game_id}")
-
-            elif msg_type == "start_game":
-                game = games.get(game_id)
-                if not game:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game not found."}})
-                    continue
-                if game.game_status != "waiting":
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game already started or finished."}})
-                    continue
+                await broadcast_game_update()
                 
-                game.game_status = "active"
-                game.current_round = 1
-                game.price_history = [{"name": "Day 1", "value": game.current_price}] # Reset price history
-                game.orders = [] # Clear orders from previous games
-                game.trades = [] # Clear trades from previous games
-                game.round_timer_task = asyncio.create_task(start_round_timer(game_id))
-                await broadcast_game_state(game_id)
-                print(f"Game {game_id} started by {payload['playerId']}")
-
-            elif msg_type == "submit_order":
-                game = games.get(game_id)
-                if not game:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game not found."}})
-                    continue
-                if game.game_status != "active":
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game is not active."}})
-                    return
-
-                player_data = game.players.get(payload["playerId"])
-                if not player_data:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Player not found."}})
-                    return
-
-                price = int(payload["price"]) # Ensure integer
-                quantity = int(payload["quantity"]) # Ensure integer
-
-                if price <= 0 or quantity <= 0:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Price and quantity must be positive integers."}})
-                    return
-
-                if payload["orderType"] == "buy" and player_data["balance"] < price * quantity:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Insufficient balance."}})
-                    return
-                
-                if payload["orderType"] == "sell" and player_data["shares"] < quantity:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Insufficient shares."}})
-                    return
-
-                game.orders.append({
-                    "id": f"order-{int(time.time() * 1000)}-{payload['playerId']}",
-                    "playerId": payload["playerId"],
-                    "type": payload["orderType"],
-                    "price": price,
-                    "quantity": quantity,
-                    "round": game.current_round,
-                })
-                await broadcast_game_state(game_id)
-                await websocket.send_json({"type": "notification", "payload": {"message": "Order submitted successfully!"}})
-
-            elif msg_type == "end_round":
-                game = games.get(game_id)
-                if not game:
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game not found."}})
-                    return
-                if game.game_status != "active":
-                    await websocket.send_json({"type": "error", "payload": {"message": "Game is not active."}})
-                    return
-                
-                # Cancel any pending round timer task
-                if game.round_timer_task:
-                    game.round_timer_task.cancel()
-                    game.round_timer_task = None
-                
-                await process_round(game_id)
-                await websocket.send_json({"type": "notification", "payload": {"message": f"Round {game.current_round - 1} ended manually."}})
-
-            else:
-                await websocket.send_json({"type": "error", "payload": {"message": "Unknown message type"}})
-
+            elif message["type"] == "GAME_START":
+                player = game_state.players.get(message["playerId"])
+                if player and player.is_monitor:
+                    game_state.phase = "SETUP"
+                    await broadcast_game_update()
+                    
+            elif message["type"] == "ORDER_SUBMIT":
+                player = game_state.players.get(message["playerId"])
+                if player and not player.is_monitor and player.orders_submitted < 2:
+                    order_data = message["data"]
+                    order_id = f"{message['playerId']}-{int(time.time())}"
+                    
+                    order = Order(
+                        order_id,
+                        order_data["playerId"],
+                        order_data["playerName"],
+                        order_data["stock"],
+                        order_data["type"],
+                        order_data["price"],
+                        order_data["quantity"],
+                        game_state.current_round
+                    )
+                    
+                    game_state.orders.append(order)
+                    player.orders_submitted += 1
+                    
+                    await broadcast_game_update()
+                    
+            elif message["type"] == "PLAYER_DONE":
+                player = game_state.players.get(message["playerId"])
+                if player:
+                    player.is_done = True
+                    await broadcast_game_update()
+                    
+            elif message["type"] == "FORCE_CLOSE_ORDERS":
+                player = game_state.players.get(message["playerId"])
+                if player and player.is_monitor:
+                    game_state.force_close_orders()
+                    await broadcast_game_update()
+                    
+            elif message["type"] == "ROUND_PROCESS":
+                player = game_state.players.get(message["playerId"])
+                if player and player.is_monitor:
+                    await process_round()
+                    
+            elif message["type"] == "NEXT_ROUND":
+                player = game_state.players.get(message["playerId"])
+                if player and player.is_monitor:
+                    await next_round()
+                    
     except WebSocketDisconnect:
-        print(f"Player {player_id} disconnected from game {game_id}")
-        if player_id and player_id in player_connections:
-            del player_connections[player_id]
-        # Optionally, handle player leaving the game (e.g., remove their orders, mark them inactive)
+        logger.info(f"Player {player_id} disconnected")
     except Exception as e:
-        print(f"Error in websocket for player {player_id} in game {game_id}: {e}")
-        if player_id and player_id in player_connections:
-            del player_connections[player_id]
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        if player_id:
+            game_state.remove_websocket(player_id)
+
+async def process_round():
+    """Process the current round"""
+    game_state.phase = "PROCESSING"
+    await broadcast_game_update()
+    
+    # Wait a bit for UI update
+    await asyncio.sleep(2)
+    
+    # Generate market maker orders
+    mm_orders = game_state.generate_market_maker_orders()
+    game_state.orders.extend(mm_orders)
+    
+    # Process all orders and execute trades
+    new_trades = game_state.process_orders()
+    game_state.trades.extend(new_trades)
+    
+    # Calculate new prices
+    new_prices = game_state.calculate_new_prices(new_trades)
+    game_state.current_prices = new_prices
+    
+    # Update player portfolios
+    game_state.update_player_portfolios(new_trades)
+    game_state.update_total_values()
+    
+    # Add new price point to history if there were trades
+    if new_trades:
+        game_state.price_history.append(PricePoint(
+            10 + game_state.current_round,
+            new_prices["CAMB"],
+            game_state.current_round,
+            True
+        ))
+    
+    game_state.phase = "RESULTS"
+    await broadcast_game_update()
+
+async def next_round():
+    """Move to the next round or finish the game"""
+    if game_state.current_round >= 10:
+        # Game finished - calculate final rankings
+        human_players = game_state.get_human_players()
+        non_monitor_players = [p for p in human_players if not p.is_monitor]
+        non_monitor_players.sort(key=lambda x: x.total_value, reverse=True)
+        
+        for i, player in enumerate(non_monitor_players):
+            player.rank = i + 1
+        
+        game_state.phase = "FINISHED"
+    else:
+        # Next round
+        game_state.current_round += 1
+        game_state.phase = "TRADING"
+        
+        # Reset player states for new round
+        for player in game_state.players.values():
+            player.orders_submitted = 0
+            player.is_done = False
+        
+        # Remove filled orders, keep pending ones
+        game_state.orders = [o for o in game_state.orders if o.status == "PENDING"]
+    
+    await broadcast_game_update()
+
+@app.get("/")
+async def root():
+    return {"message": "Trading Simulation Game Backend", "status": "running"}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "players": len(game_state.players)}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,343 +1,415 @@
 const WebSocket = require("ws")
+const http = require("http")
 
-const wss = new WebSocket.Server({ port: 8080 })
+// Game state management
+const games = new Map()
 
-const games = new Map() // Map to store game states: gameId -> gameState
+// Generate synthetic price history for 10 days
+function generatePriceHistory() {
+  const history = []
+  let cambPrice = 50 + Math.random() * 20 // Start between $50-70
+  let oxfordPrice = 30 + Math.random() * 15 // Start between $30-45
 
-wss.on("connection", (ws) => {
-  console.log("Client connected")
+  for (let day = 1; day <= 10; day++) {
+    // Add some volatility
+    cambPrice += (Math.random() - 0.5) * 4
+    oxfordPrice += (Math.random() - 0.5) * 3
 
-  ws.on("message", (message) => {
-    try {
-      const data = JSON.parse(message)
-      const { type, payload } = data
+    // Keep prices reasonable
+    cambPrice = Math.max(20, Math.min(100, cambPrice))
+    oxfordPrice = Math.max(15, Math.min(60, oxfordPrice))
 
-      switch (type) {
-        case "create_game":
-          handleCreateGame(ws, payload)
-          break
-        case "join_game":
-          handleJoinGame(ws, payload)
-          break
-        case "start_game":
-          handleStartGame(ws, payload)
-          break
-        case "submit_order":
-          handleSubmitOrder(ws, payload)
-          break
-        case "end_round":
-          handleEndRound(ws, payload)
-          break
-        default:
-          ws.send(JSON.stringify({ type: "error", payload: { message: "Unknown message type" } }))
-      }
-    } catch (error) {
-      console.error("Failed to parse message or handle action:", error)
-      ws.send(JSON.stringify({ type: "error", payload: { message: "Invalid message format or internal error." } }))
-    }
-  })
+    history.push({
+      day,
+      cambridgeMining: Number(cambPrice.toFixed(2)),
+      oxfordWater: Number(oxfordPrice.toFixed(2)),
+    })
+  }
+  return history
+}
 
-  ws.on("close", () => {
-    console.log("Client disconnected")
-    // Handle player disconnection, e.g., remove from game or mark as offline
-  })
+// Create market makers
+function createMarketMakers() {
+  const marketMakers = []
+  const names = ["Goldman MM", "Morgan MM", "Citadel MM", "Jane Street MM", "Virtu MM"]
 
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error)
-  })
-})
-
-function handleCreateGame(ws, { gameId, playerName }) {
-  if (games.has(gameId)) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game ID already exists." } }))
-    return
+  for (let i = 0; i < 5; i++) {
+    marketMakers.push({
+      id: `mm${i + 1}`,
+      name: names[i],
+      cash: 100000,
+      cambridgeShares: 1000,
+      oxfordShares: 1000,
+      totalValue: 0,
+      isMarketMaker: true,
+      ordersSubmitted: 0,
+      isDone: false,
+      isOnline: true,
+    })
   }
 
-  const playerId = `player-${Math.random().toString(36).substring(2, 8)}`
-  const newPlayer = { id: playerId, name: playerName, balance: 10000, shares: 0, ws }
+  return marketMakers
+}
 
-  const gameState = {
-    players: [newPlayer],
+// Initialize game state
+function initializeGame(gameId) {
+  const priceHistory = generatePriceHistory()
+  const lastDay = priceHistory[priceHistory.length - 1]
+
+  return {
+    currentRound: 1,
+    phase: "LOBBY",
+    players: [...createMarketMakers()],
     orders: [],
     trades: [],
-    currentPrice: 100,
-    priceHistory: [{ name: "Day 1", value: 100 }],
-    currentRound: 1,
-    gameStatus: "waiting", // waiting, active, finished
-    roundDuration: 30, // seconds
-    roundEndTime: null,
+    priceHistory,
+    currentPrices: { CAMB: lastDay.cambridgeMining, OXFD: lastDay.oxfordWater },
+    gameStarted: false,
   }
-  games.set(gameId, gameState)
-
-  ws.playerId = playerId
-  ws.gameId = gameId
-
-  ws.send(JSON.stringify({ type: "player_id", payload: { playerId } }))
-  broadcastGameState(gameId)
-  console.log(`Game ${gameId} created by ${playerName} (${playerId})`)
 }
 
-function handleJoinGame(ws, { gameId, playerName }) {
-  const gameState = games.get(gameId)
-  if (!gameState) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game ID not found." } }))
-    return
-  }
+// Generate market maker orders
+function generateMarketMakerOrders(gameState) {
+  const mmOrders = []
+  const marketMakers = gameState.players.filter((p) => p.isMarketMaker && !p.isDone)
 
-  const playerId = `player-${Math.random().toString(36).substring(2, 8)}`
-  const newPlayer = { id: playerId, name: playerName, balance: 10000, shares: 0, ws }
-  gameState.players.push(newPlayer)
+  marketMakers.forEach((mm) => {
+    const ordersToPlace = Math.floor(Math.random() * 4) + 2 // 2-5 orders per MM
 
-  ws.playerId = playerId
-  ws.gameId = gameId
+    for (let i = 0; i < ordersToPlace && (mm.ordersSubmitted || 0) < 5; i++) {
+      const stock = Math.random() > 0.5 ? "CAMB" : "OXFD"
+      const currentPrice = gameState.currentPrices[stock]
+      const type = Math.random() > 0.5 ? "BUY" : "SELL"
 
-  ws.send(JSON.stringify({ type: "player_id", payload: { playerId } }))
-  broadcastGameState(gameId)
-  console.log(`${playerName} (${playerId}) joined game ${gameId}`)
-}
+      let price
+      if (type === "BUY") {
+        price = currentPrice * (0.98 + Math.random() * 0.015)
+      } else {
+        price = currentPrice * (1.005 + Math.random() * 0.015)
+      }
 
-function handleStartGame(ws, { gameId, playerId }) {
-  const gameState = games.get(gameId)
-  if (!gameState) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game not found." } }))
-    return
-  }
+      price = Number(price.toFixed(2))
+      const quantity = Math.floor(Math.random() * 150) + 50
 
-  if (gameState.gameStatus !== "waiting") {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game already started or finished." } }))
-    return
-  }
+      const canPlace =
+        type === "BUY"
+          ? mm.cash >= price * quantity
+          : (stock === "CAMB" ? mm.cambridgeShares : mm.oxfordShares) >= quantity
 
-  gameState.gameStatus = "active"
-  gameState.currentRound = 1
-  gameState.priceHistory = [{ name: "Day 1", value: gameState.currentPrice }] // Reset price history
-  gameState.orders = [] // Clear orders from previous games
-  gameState.trades = [] // Clear trades from previous games
-  startRound(gameId)
-  broadcastGameState(gameId)
-  console.log(`Game ${gameId} started by ${playerId}`)
-}
+      if (canPlace) {
+        mmOrders.push({
+          id: `${mm.id}-${stock}-${Date.now()}-${i}`,
+          playerId: mm.id,
+          playerName: mm.name,
+          stock,
+          type,
+          price,
+          quantity,
+          round: gameState.currentRound,
+          status: "PENDING",
+        })
 
-function startRound(gameId) {
-  const gameState = games.get(gameId)
-  if (!gameState) return
+        mm.ordersSubmitted = (mm.ordersSubmitted || 0) + 1
+      }
+    }
 
-  gameState.roundEndTime = Date.now() + gameState.roundDuration * 1000
-  broadcastGameState(gameId)
-
-  // Market maker places orders
-  placeMarketMakerOrders(gameId)
-
-  setTimeout(() => {
-    processRound(gameId)
-  }, gameState.roundDuration * 1000)
-}
-
-function placeMarketMakerOrders(gameId) {
-  const gameState = games.get(gameId)
-  if (!gameState) return
-
-  const currentPrice = gameState.currentPrice
-  const bidPrice = Math.max(1, currentPrice - Math.floor(Math.random() * 5) - 1) // -1 to -5
-  const askPrice = currentPrice + Math.floor(Math.random() * 5) + 1 // +1 to +5
-  const quantity = Math.floor(Math.random() * 10) + 1 // 1 to 10 shares
-
-  // Market maker buy order
-  gameState.orders.push({
-    id: `order-mm-buy-${Date.now()}`,
-    playerId: "market_maker",
-    type: "buy",
-    price: bidPrice,
-    quantity: quantity,
-    round: gameState.currentRound,
+    mm.isDone = true
   })
 
-  // Market maker sell order
-  gameState.orders.push({
-    id: `order-mm-sell-${Date.now()}`,
-    playerId: "market_maker",
-    type: "sell",
-    price: askPrice,
-    quantity: quantity,
-    round: gameState.currentRound,
-  })
-  broadcastGameState(gameId)
+  return mmOrders
 }
 
-function handleSubmitOrder(ws, { gameId, playerId, orderType, price, quantity }) {
-  const gameState = games.get(gameId)
-  if (!gameState) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game not found." } }))
-    return
-  }
+// Process orders and execute trades
+function processOrders(allOrders) {
+  const trades = []
+  const updatedOrders = [...allOrders]
 
-  if (gameState.gameStatus !== "active") {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game is not active." } }))
-    return
-  }
-
-  const player = gameState.players.find((p) => p.id === playerId)
-  if (!player) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Player not found." } }))
-    return
-  }
-
-  // Ensure price and quantity are integers
-  const parsedPrice = Number.parseInt(price)
-  const parsedQuantity = Number.parseInt(quantity)
-
-  if (isNaN(parsedPrice) || parsedPrice <= 0 || isNaN(parsedQuantity) || parsedQuantity <= 0) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Price and quantity must be positive integers." } }))
-    return
-  }
-
-  if (orderType === "buy" && player.balance < parsedPrice * parsedQuantity) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Insufficient balance." } }))
-    return
-  }
-
-  if (orderType === "sell" && player.shares < parsedQuantity) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Insufficient shares." } }))
-    return
-  }
-
-  const newOrder = {
-    id: `order-${Date.now()}-${playerId}`,
-    playerId,
-    type: orderType,
-    price: parsedPrice,
-    quantity: parsedQuantity,
-    round: gameState.currentRound,
-  }
-  gameState.orders.push(newOrder)
-  broadcastGameState(gameId)
-  ws.send(JSON.stringify({ type: "notification", payload: { message: "Order submitted successfully!" } }))
-}
-
-function processRound(gameId) {
-  const gameState = games.get(gameId)
-  if (!gameState) return
-
-  console.log(`Processing round ${gameState.currentRound} for game ${gameId}`)
-
-  const buyOrders = gameState.orders
-    .filter((o) => o.type === "buy" && o.round === gameState.currentRound)
+  // Separate buy and sell orders by stock
+  const cambBuys = allOrders
+    .filter((o) => o.stock === "CAMB" && o.type === "BUY" && o.status === "PENDING")
     .sort((a, b) => b.price - a.price)
-  const sellOrders = gameState.orders
-    .filter((o) => o.type === "sell" && o.round === gameState.currentRound)
+  const cambSells = allOrders
+    .filter((o) => o.stock === "CAMB" && o.type === "SELL" && o.status === "PENDING")
     .sort((a, b) => a.price - b.price)
 
-  const newTrades = []
-  let executedPrice = gameState.currentPrice // Default to current price if no trades
+  const oxfordBuys = allOrders
+    .filter((o) => o.stock === "OXFD" && o.type === "BUY" && o.status === "PENDING")
+    .sort((a, b) => b.price - a.price)
+  const oxfordSells = allOrders
+    .filter((o) => o.stock === "OXFD" && o.type === "SELL" && o.status === "PENDING")
+    .sort((a, b) => a.price - b.price)
 
-  while (buyOrders.length > 0 && sellOrders.length > 0 && buyOrders[0].price >= sellOrders[0].price) {
-    const buyOrder = buyOrders[0]
-    const sellOrder = sellOrders[0]
+  // Match orders
+  matchOrders(cambBuys, cambSells, "CAMB", trades, updatedOrders)
+  matchOrders(oxfordBuys, oxfordSells, "OXFD", trades, updatedOrders)
 
-    const tradeQuantity = Math.min(buyOrder.quantity, sellOrder.quantity)
-    const tradePrice = (buyOrder.price + sellOrder.price) / 2 // Mid-price for simplicity
-
-    newTrades.push({
-      id: `trade-${Date.now()}-${buyOrder.id}-${sellOrder.id}`,
-      buyerId: buyOrder.playerId,
-      sellerId: sellOrder.playerId,
-      price: Math.round(tradePrice), // Ensure integer price
-      quantity: tradeQuantity,
-      round: gameState.currentRound,
-    })
-
-    // Update player balances and shares
-    const buyer = gameState.players.find((p) => p.id === buyOrder.playerId)
-    const seller = gameState.players.find((p) => p.id === sellOrder.playerId)
-
-    if (buyer && buyer.id !== "market_maker") {
-      buyer.balance -= Math.round(tradePrice) * tradeQuantity
-      buyer.shares += tradeQuantity
-    }
-    if (seller && seller.id !== "market_maker") {
-      seller.balance += Math.round(tradePrice) * tradeQuantity
-      seller.shares -= tradeQuantity
-    }
-
-    // Update remaining quantities
-    buyOrder.quantity -= tradeQuantity
-    sellOrder.quantity -= tradeQuantity
-
-    // Remove fulfilled orders
-    if (buyOrder.quantity === 0) buyOrders.shift()
-    if (sellOrder.quantity === 0) sellOrders.shift()
-
-    executedPrice = Math.round(tradePrice)
-  }
-
-  // Update current price based on last trade or average of remaining orders
-  if (newTrades.length > 0) {
-    gameState.currentPrice = executedPrice
-  } else if (buyOrders.length > 0 && sellOrders.length > 0) {
-    // If no trades, price moves towards the middle of the best bid/ask
-    gameState.currentPrice = Math.round((buyOrders[0].price + sellOrders[0].price) / 2)
-  } else {
-    // If only one side remains, price moves towards that side
-    if (buyOrders.length > 0) {
-      gameState.currentPrice = Math.round(buyOrders[0].price * 0.95) // Price drops if only buyers
-    } else if (sellOrders.length > 0) {
-      gameState.currentPrice = Math.round(sellOrders[0].price * 1.05) // Price rises if only sellers
-    }
-  }
-
-  // Ensure price is always positive
-  gameState.currentPrice = Math.max(1, gameState.currentPrice)
-
-  gameState.trades.push(...newTrades)
-  gameState.priceHistory.push({ name: `Day ${gameState.currentRound + 1}`, value: gameState.currentPrice })
-
-  // Clear orders for the next round, keeping only unfulfilled parts if any
-  gameState.orders = [...buyOrders, ...sellOrders].filter((order) => order.quantity > 0)
-
-  gameState.currentRound++
-
-  if (gameState.currentRound <= 10) {
-    // Example: run for 10 rounds
-    startRound(gameId)
-  } else {
-    gameState.gameStatus = "finished"
-    console.log(`Game ${gameId} finished.`)
-  }
-  broadcastGameState(gameId)
+  return { trades, orders: updatedOrders }
 }
 
-function handleEndRound(ws, { gameId, playerId }) {
-  const gameState = games.get(gameId)
-  if (!gameState) {
-    ws.send(JSON.stringify({ type: "error", payload: { message: "Game not found." } }))
-    return
-  }
+function matchOrders(buyOrders, sellOrders, stock, trades, orders) {
+  let buyIndex = 0
+  let sellIndex = 0
 
-  // For manual round ending, we can immediately process the round
-  // In a real game, this might be restricted or trigger a timer reset
-  processRound(gameId)
-  ws.send(
-    JSON.stringify({
-      type: "notification",
-      payload: { message: `Round ${gameState.currentRound - 1} ended manually.` },
-    }),
-  )
+  while (buyIndex < buyOrders.length && sellIndex < sellOrders.length) {
+    const buyOrder = buyOrders[buyIndex]
+    const sellOrder = sellOrders[sellIndex]
+
+    if (buyOrder.price >= sellOrder.price) {
+      const tradePrice = sellOrder.price
+      const tradeQuantity = Math.min(buyOrder.quantity, sellOrder.quantity)
+
+      trades.push({
+        id: `trade-${Date.now()}-${Math.random()}`,
+        stock,
+        price: tradePrice,
+        quantity: tradeQuantity,
+        buyerId: buyOrder.playerId,
+        sellerId: sellOrder.playerId,
+        round: buyOrder.round,
+      })
+
+      // Update order quantities
+      const buyOrderIndex = orders.findIndex((o) => o.id === buyOrder.id)
+      const sellOrderIndex = orders.findIndex((o) => o.id === sellOrder.id)
+
+      if (buyOrderIndex !== -1) {
+        orders[buyOrderIndex].quantity -= tradeQuantity
+        orders[buyOrderIndex].filledQuantity = (orders[buyOrderIndex].filledQuantity || 0) + tradeQuantity
+        if (orders[buyOrderIndex].quantity === 0) {
+          orders[buyOrderIndex].status = "FILLED"
+        } else {
+          orders[buyOrderIndex].status = "PARTIAL"
+        }
+      }
+
+      if (sellOrderIndex !== -1) {
+        orders[sellOrderIndex].quantity -= tradeQuantity
+        orders[sellOrderIndex].filledQuantity = (orders[sellOrderIndex].filledQuantity || 0) + tradeQuantity
+        if (orders[sellOrderIndex].quantity === 0) {
+          orders[sellOrderIndex].status = "FILLED"
+        } else {
+          orders[sellOrderIndex].status = "PARTIAL"
+        }
+      }
+
+      if (buyOrder.quantity <= tradeQuantity) buyIndex++
+      if (sellOrder.quantity <= tradeQuantity) sellIndex++
+
+      buyOrder.quantity -= tradeQuantity
+      sellOrder.quantity -= tradeQuantity
+    } else {
+      sellIndex++
+    }
+  }
 }
 
-function broadcastGameState(gameId) {
-  const gameState = games.get(gameId)
-  if (!gameState) return
+// Calculate new prices based on executed trades
+function calculateNewPrices(trades, currentPrices) {
+  const newPrices = { ...currentPrices }
 
-  const stateToSend = {
-    ...gameState,
-    players: gameState.players.map(({ ws, ...player }) => player), // Exclude ws object
+  const cambTrades = trades.filter((t) => t.stock === "CAMB")
+  const oxfordTrades = trades.filter((t) => t.stock === "OXFD")
+
+  if (cambTrades.length > 0) {
+    const totalVolume = cambTrades.reduce((sum, t) => sum + t.quantity, 0)
+    const totalValue = cambTrades.reduce((sum, t) => sum + t.price * t.quantity, 0)
+    newPrices.CAMB = Number((totalValue / totalVolume).toFixed(2))
   }
 
-  gameState.players.forEach((player) => {
-    if (player.ws.readyState === WebSocket.OPEN) {
-      player.ws.send(JSON.stringify({ type: "game_state", payload: stateToSend }))
+  if (oxfordTrades.length > 0) {
+    const totalVolume = oxfordTrades.reduce((sum, t) => sum + t.quantity, 0)
+    const totalValue = oxfordTrades.reduce((sum, t) => sum + t.price * t.quantity, 0)
+    newPrices.OXFD = Number((totalValue / totalVolume).toFixed(2))
+  }
+
+  return newPrices
+}
+
+// Update player portfolios based on trades
+function updatePlayerPortfolios(players, trades) {
+  const updatedPlayers = [...players]
+
+  trades.forEach((trade) => {
+    const buyerIndex = updatedPlayers.findIndex((p) => p.id === trade.buyerId)
+    const sellerIndex = updatedPlayers.findIndex((p) => p.id === trade.sellerId)
+
+    if (buyerIndex !== -1 && sellerIndex !== -1) {
+      const totalCost = trade.price * trade.quantity
+
+      // Update buyer
+      updatedPlayers[buyerIndex].cash -= totalCost
+      if (trade.stock === "CAMB") {
+        updatedPlayers[buyerIndex].cambridgeShares += trade.quantity
+      } else {
+        updatedPlayers[buyerIndex].oxfordShares += trade.quantity
+      }
+
+      // Update seller
+      updatedPlayers[sellerIndex].cash += totalCost
+      if (trade.stock === "CAMB") {
+        updatedPlayers[sellerIndex].cambridgeShares -= trade.quantity
+      } else {
+        updatedPlayers[sellerIndex].oxfordShares -= trade.quantity
+      }
     }
   })
+
+  return updatedPlayers
 }
 
-console.log("WebSocket server started on port 8080")
+// Broadcast to all clients in a game
+function broadcastToGame(gameId, message) {
+  const game = games.get(gameId)
+  if (game && game.clients) {
+    game.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(message))
+      }
+    })
+  }
+}
+
+// Create HTTP server
+const server = http.createServer()
+const wss = new WebSocket.Server({ server })
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const gameId = url.pathname.split('/').pop();
+  
+  console.log(`New connection to game: ${gameId}`);
+
+  // Initialize game if it doesn't exist
+  if (!games.has(gameId)) {
+    games.set(gameId, {
+      state: initializeGame(gameId),
+      clients: new Set()
+    });
+  }
+
+  const game = games.get(gameId);
+  game.clients.add(ws);
+
+  // Send current game state to new client
+  ws.send(JSON.stringify({
+    type: 'GAME_UPDATE',
+    gameState: game.state
+  }));
+
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data);
+      console.log(`Received message:`, message);
+
+      switch (message.type) {
+        case 'PLAYER_JOIN':
+          const newPlayer = {
+            id: message.playerId,
+            name: message.playerName,
+            cash: 10000,
+            cambridgeShares: 0,
+            oxfordShares: 0,
+            totalValue: 10000,
+            isMonitor: message.isMonitor,
+            ordersSubmitted: 0,
+            isDone: false,
+            isOnline: true,
+          };
+
+          game.state.players.push(newPlayer);
+          
+          broadcastToGame(gameId, {
+            type: 'GAME_UPDATE',
+            gameState: game.state
+          });
+          break;
+
+        case 'GAME_START':
+          const monitor = game.state.players.find(p => p.id === message.playerId && p.isMonitor);
+          if (monitor) {
+            game.state.phase = "SETUP";
+            broadcastToGame(gameId, {
+              type: 'GAME_UPDATE',
+              gameState: game.state
+            });
+          }
+          break;
+
+        case 'ORDER_SUBMIT':
+          const player = game.state.players.find(p => p.id === message.playerId);
+          if (player && !player.isMonitor && (player.ordersSubmitted || 0) < 5) {
+            const newOrder = {
+              ...message.data,
+              id: `${message.playerId}-${Date.now()}`,
+              round: game.state.currentRound,
+              status: "PENDING",
+            };
+
+            game.state.orders.push(newOrder);
+            player.ordersSubmitted = (player.ordersSubmitted || 0) + 1;
+
+            broadcastToGame(gameId, {
+              type: 'GAME_UPDATE',
+              gameState: game.state
+            });
+          }
+          break;
+
+        case 'PLAYER_DONE':
+          const donePlayer = game.state.players.find(p => p.id === message.playerId);
+          if (donePlayer) {
+            donePlayer.isDone = true;
+            broadcastToGame(gameId, {
+              type: 'GAME_UPDATE',
+              gameState: game.state
+            });
+          }
+          break;
+
+        case 'ROUND_PROCESS':
+          const processingMonitor = game.state.players.find(p => p.id === message.playerId && p.isMonitor);
+          if (processingMonitor) {
+            game.state.phase = "PROCESSING";
+            broadcastToGame(gameId, {
+              type: 'GAME_UPDATE',
+              gameState: game.state
+            });
+
+            // Process round after delay
+            setTimeout(() => {
+              // Generate market maker orders
+              const mmOrders = generateMarketMakerOrders(game.state);
+              const allOrders = [...game.state.orders, ...mmOrders];
+
+              // Process orders and execute trades
+              const { trades, orders } = processOrders(allOrders);
+
+              // Calculate new prices
+              const newPrices = calculateNewPrices(trades, game.state.currentPrices);
+
+              // Update player portfolios
+              const updatedPlayers = updatePlayerPortfolios(game.state.players, trades);
+
+              // Update total values
+              updatedPlayers.forEach(player => {
+                player.totalValue = player.cash + 
+                  player.cambridgeShares * newPrices.CAMB + 
+                  player.oxfordShares * newPrices.OXFD;
+              });
+
+              // Add new price point to history if there were trades
+              if (trades.length > 0) {
+                game.state.priceHistory.push({
+                  day: 10 + game.state.currentRound,
+                  round: game.state.currentRound,
+                  cambridgeMining: newPrices.CAMB,
+                  oxfordWater: newPrices.OXFD,
+                  isTradeDay: true,
+                });
+              }
+
+              // Update game state
+              game.state.orders = orders;
+              game.state.trades = [...game.state.trades, ...trades];
+              game.state.players = updatedPlayers;
+              game.state.currentPrices = newPrices;

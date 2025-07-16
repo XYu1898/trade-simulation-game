@@ -1,9 +1,5 @@
-import TradingSimulation from "@/trading-simulation"
+import TradingGame from "../trading-game"
 
 export default function Home() {
-  return (
-    <main>
-      <TradingSimulation />
-    </main>
-  )
+  return <TradingGame />
 }
