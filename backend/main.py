@@ -32,7 +32,7 @@ class Player:
 
 class Order:
     def __init__(self, order_id: str, player_id: str, player_name: str, stock: str, 
-                 order_type: str, price: float, quantity: int, round_num: int):
+                 order_type: str, price: int, quantity: int, round_num: int):
         self.id = order_id
         self.player_id = player_id
         self.player_name = player_name
@@ -45,7 +45,7 @@ class Order:
         self.filled_quantity = 0
 
 class Trade:
-    def __init__(self, trade_id: str, stock: str, price: float, quantity: int, 
+    def __init__(self, trade_id: str, stock: str, price: int, quantity: int, 
                  buyer_id: str, seller_id: str, round_num: int):
         self.id = trade_id
         self.stock = stock
@@ -56,7 +56,7 @@ class Trade:
         self.round = round_num
 
 class PricePoint:
-    def __init__(self, day: int, camb_price: float, 
+    def __init__(self, day: int, camb_price: int, 
                  round_num: Optional[int] = None, is_trade_day: bool = False):
         self.day = day
         self.cambridge_mining = camb_price
@@ -71,7 +71,7 @@ class GameState:
         self.orders: List[Order] = []
         self.trades: List[Trade] = []
         self.price_history: List[PricePoint] = []
-        self.current_prices = {"CAMB": 0.0}
+        self.current_prices = {"CAMB": 0}
         self.game_started = False
         self.websockets: Dict[str, WebSocket] = {}
         
@@ -89,7 +89,7 @@ class GameState:
     def _generate_price_history(self):
         """Generate synthetic price history for 10 days with V-shape recovery"""
         # Start at a high price
-        start_price = 75.0
+        start_price = 75
         
         # Create V-shape: decline for first 5 days, then recover for next 5 days
         prices = []
@@ -98,20 +98,20 @@ class GameState:
         current_price = start_price
         for day in range(1, 6):
             # Steep decline with some volatility
-            decline = random.uniform(8, 12)  # 8-12% decline per day
-            volatility = random.uniform(-2, 2)  # Add some noise
-            current_price = current_price * (1 - decline/100 + volatility/100)
-            current_price = max(30, current_price)  # Don't go below $30
-            prices.append((day, round(current_price, 2)))
+            decline_amount = random.randint(4, 8) # Decline by 4-8 dollars
+            volatility = random.randint(-2, 2) # Add some noise
+            current_price = current_price - decline_amount + volatility
+            current_price = max(30, current_price) # Don't go below $30
+            prices.append((day, int(current_price))) # Ensure integer
         
         # Recovery phase (days 6-10)
         for day in range(6, 11):
             # Strong recovery with volatility
-            recovery = random.uniform(10, 15)  # 10-15% recovery per day
-            volatility = random.uniform(-3, 3)  # Add some noise
-            current_price = current_price * (1 + recovery/100 + volatility/100)
-            current_price = min(100, current_price)  # Cap at $100
-            prices.append((day, round(current_price, 2)))
+            recovery_amount = random.randint(5, 10) # Recover by 5-10 dollars
+            volatility = random.randint(-3, 3) # Add some noise
+            current_price = current_price + recovery_amount + volatility
+            current_price = min(100, current_price) # Cap at $100
+            prices.append((day, int(current_price))) # Ensure integer
         
         # Create price history
         for day, price in prices:
@@ -165,13 +165,13 @@ class GameState:
                 current_price = self.current_prices["CAMB"]
                 order_type = random.choice(["BUY", "SELL"])
                 
-                # Market makers quote around current price
+                # Market makers quote around current price with +/- $5 spread
                 if order_type == "BUY":
-                    price = current_price * (0.97 + random.random() * 0.02)  # 97-99% of current price
+                    price = current_price - random.randint(1, 5)
                 else:
-                    price = current_price * (1.01 + random.random() * 0.02)  # 101-103% of current price
+                    price = current_price + random.randint(1, 5)
                 
-                price = round(price, 2)
+                price = max(1, int(price)) # Ensure price is at least 1 and integer
                 quantity = random.randint(50, 150)
                 
                 # Check if MM can place this order
@@ -221,7 +221,7 @@ class GameState:
             
             if buy_order.price >= sell_order.price:
                 # Execute trade
-                trade_price = sell_order.price
+                trade_price = sell_order.price # Trade at seller's price
                 trade_quantity = min(buy_order.quantity, sell_order.quantity)
                 
                 trade_id = f"trade-{int(time.time())}-{random.randint(1000, 9999)}"
@@ -273,16 +273,19 @@ class GameState:
                 seller.cash += total_cost
                 seller.cambridge_shares -= trade.quantity
 
-    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, float]:
+    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, int]: # Return type is now int
         """Calculate new prices based on executed trades"""
         new_prices = self.current_prices.copy()
         
         # Calculate volume-weighted average price for CAMB
         camb_trades = [t for t in trades if t.stock == "CAMB"]
         if camb_trades:
-            total_volume = sum(t.quantity for t in camb_trades)
-            total_value = sum(t.price * t.quantity for t in camb_trades)
-            new_prices["CAMB"] = round(total_value / total_volume, 2)
+            # If trades occurred, the last price should be the highest price the stocks were traded at.
+            highest_trade_price = max(t.price for t in camb_trades)
+            new_prices["CAMB"] = highest_trade_price
+        else:
+            # If no trades, the last price should be the most recent price.
+            new_prices["CAMB"] = self.current_prices["CAMB"]
         
         return new_prices
 
@@ -497,15 +500,11 @@ async def process_round():
     new_prices = game_state.calculate_new_prices(new_trades)
     game_state.current_prices = new_prices
     
-    # Update player portfolios
-    game_state.update_player_portfolios(new_trades)
-    game_state.update_total_values()
-    
     # Add new price point to history if there were trades
     if new_trades:
         game_state.price_history.append(PricePoint(
-            10 + game_state.current_round,
-            new_prices["CAMB"],
+            10 + game_state.current_round, # Continue day count
+            new_prices["CAMB"], # Use integer price
             game_state.current_round,
             True
         ))

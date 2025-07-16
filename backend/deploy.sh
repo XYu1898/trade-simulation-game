@@ -1,16 +1,24 @@
 #!/bin/bash
 
-echo "Deploying Trading Simulation Game Backend to Fly.io..."
-
-# Check if flyctl is installed
-if ! command -v flyctl &> /dev/null; then
-    echo "flyctl is not installed. Please install it first:"
-    echo "https://fly.io/docs/hands-on/install-flyctl/"
+# Ensure flyctl is installed and logged in
+if ! command -v flyctl &> /dev/null
+then
+    echo "flyctl could not be found. Please install it: https://fly.io/docs/getting-started/installing-flyctl/"
     exit 1
 fi
 
-# Deploy to Fly.io
-flyctl deploy
+flyctl auth login
 
-echo "Deployment complete!"
-echo "Your backend is now running at: https://trade-simulation-game.fly.dev"
+# Define your Fly.io app name
+APP_NAME="trade-simulation-game" # Replace with your desired app name
+
+echo "Deploying backend to Fly.io app: $APP_NAME"
+
+# Deploy the application
+# --remote-only: Build on Fly.io builder, not locally
+# --push: Push the image to the Fly.io registry
+# -a $APP_NAME: Specify the app name
+flyctl deploy --remote-only --push -a $APP_NAME
+
+echo "Deployment complete. Check your app status with: flyctl status -a $APP_NAME"
+echo "You can find your app's URL in the Fly.io dashboard or by running 'flyctl info -a $APP_NAME'"
