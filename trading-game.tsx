@@ -230,6 +230,30 @@ export default function TradingGame() {
     return humanPlayersOnly.every((p) => p.isDone || (p.ordersSubmitted || 0) >= 2)
   }
 
+  // Get external investor info for current round
+  const getExternalInvestorInfo = () => {
+    if (!gameState) return null
+
+    if (gameState.currentRound === 4) {
+      const sellPrice = Math.floor(gameState.currentPrices.CAMB * 0.5)
+      return {
+        type: "SELL",
+        quantity: 500,
+        price: sellPrice,
+        description: "External Investor selling 500 shares at 50% of current price",
+      }
+    } else if (gameState.currentRound === 7) {
+      const buyPrice = Math.floor(gameState.currentPrices.CAMB * 2.0)
+      return {
+        type: "BUY",
+        quantity: 500,
+        price: buyPrice,
+        description: "External Investor buying 500 shares at 200% of current price",
+      }
+    }
+    return null
+  }
+
   // Lobby phase - players join the game
   if (gameState?.phase === "LOBBY") {
     return (
@@ -342,12 +366,15 @@ export default function TradingGame() {
                     <p>• Next round price = rounded trade average</p>
                     <p>• Only your own trades are visible</p>
                     <p>• Previous round orders shown consolidated</p>
+                    <p className="text-orange-600">
+                      • <strong>External investors may appear in rounds 4 & 7</strong>
+                    </p>
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Price History (Last 10 Days)</CardTitle>
+                    <CardTitle>Price History (Last 20 Days)</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <ChartContainer
@@ -523,6 +550,7 @@ export default function TradingGame() {
 
   const initialValue = 10000 + 200 * 50 // Initial cash + shares * initial price
   const consolidatedOrderBook = getConsolidatedOrderBook()
+  const externalInvestorInfo = getExternalInvestorInfo()
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -551,6 +579,17 @@ export default function TradingGame() {
             </Badge>
           </div>
         </div>
+
+        {/* External Investor Alert */}
+        {externalInvestorInfo && gameState.phase === "TRADING" && (
+          <Alert className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>External Investor Alert:</strong> {externalInvestorInfo.description} ($
+              {externalInvestorInfo.price} per share)
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Current Price */}
         <div className="flex justify-center mb-6">

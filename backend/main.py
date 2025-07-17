@@ -80,37 +80,76 @@ class GameState:
         self._generate_price_history()
 
     def _generate_price_history(self):
-        """Generate synthetic price history for 10 days with V-shape recovery"""
-        # Start at a high price
-        start_price = 75
-        
-        # Create V-shape: decline for first 5 days, then recover for next 5 days
+        """Generate synthetic price history for 20 days with high volatility"""
+        # Start at 70, end at 50, with peaks at 100 and valleys at 20
         prices = []
         
-        # Decline phase (days 1-5)
-        current_price = start_price
-        for day in range(1, 6):
-            # Steep decline with some volatility
-            decline = random.uniform(8, 12)  # 8-12% decline per day
-            volatility = random.uniform(-2, 2)  # Add some noise
-            current_price = current_price * (1 - decline/100 + volatility/100)
-            current_price = max(30, current_price)  # Don't go below $30
+        # Day 1-3: Start high and decline
+        current_price = 70
+        for day in range(1, 4):
+            volatility = random.uniform(-3, 3)
+            current_price = current_price * (0.95 + volatility/100)
+            current_price = max(20, min(100, current_price))
             prices.append((day, int(round(current_price))))
         
-        # Recovery phase (days 6-10)
-        for day in range(6, 11):
-            # Strong recovery with volatility
-            recovery = random.uniform(10, 15)  # 10-15% recovery per day
-            volatility = random.uniform(-3, 3)  # Add some noise
+        # Day 4-6: Sharp decline to valley (around 20)
+        target_low = 20
+        for day in range(4, 7):
+            decline = random.uniform(15, 25)  # Sharp decline
+            volatility = random.uniform(-2, 2)
+            current_price = current_price * (1 - decline/100 + volatility/100)
+            current_price = max(20, current_price)
+            prices.append((day, int(round(current_price))))
+        
+        # Day 7-9: Recovery from valley
+        for day in range(7, 10):
+            recovery = random.uniform(10, 20)
+            volatility = random.uniform(-3, 3)
             current_price = current_price * (1 + recovery/100 + volatility/100)
-            current_price = min(100, current_price)  # Cap at $100
+            current_price = max(20, min(100, current_price))
+            prices.append((day, int(round(current_price))))
+        
+        # Day 10-12: Sharp rise to peak (around 100)
+        for day in range(10, 13):
+            surge = random.uniform(15, 25)
+            volatility = random.uniform(-2, 2)
+            current_price = current_price * (1 + surge/100 + volatility/100)
+            current_price = min(100, current_price)
+            prices.append((day, int(round(current_price))))
+        
+        # Day 13-15: Peak volatility around 100
+        for day in range(13, 16):
+            volatility = random.uniform(-8, 8)  # High volatility at peak
+            current_price = current_price * (1 + volatility/100)
+            current_price = max(80, min(100, current_price))  # Keep near peak
+            prices.append((day, int(round(current_price))))
+        
+        # Day 16-18: Gradual decline from peak
+        for day in range(16, 19):
+            decline = random.uniform(8, 15)
+            volatility = random.uniform(-3, 3)
+            current_price = current_price * (1 - decline/100 + volatility/100)
+            current_price = max(40, current_price)
+            prices.append((day, int(round(current_price))))
+        
+        # Day 19-20: Final adjustment to reach 50
+        for day in range(19, 21):
+            if day == 20:
+                # Force final price to be 50
+                current_price = 50
+            else:
+                # Adjust towards 50
+                target_adjustment = (50 - current_price) * 0.5
+                volatility = random.uniform(-2, 2)
+                current_price = current_price + target_adjustment + volatility
+                current_price = max(30, min(70, current_price))
             prices.append((day, int(round(current_price))))
         
         # Create price history
         for day, price in prices:
             self.price_history.append(PricePoint(day, price))
         
-        # Set current price to 50 (override the generated price)
+        # Set current price to 50 (final historical price)
         self.current_prices = {"CAMB": 50}
 
     def add_player(self, player_id: str, name: str, is_monitor: bool = False):
@@ -144,6 +183,40 @@ class GameState:
         for player in self.players.values():
             if not player.is_monitor:
                 player.is_done = True
+
+    def add_external_investor_orders(self):
+        """Add external investor orders at specific rounds"""
+        if self.current_round == 4:
+            # External investor sells 500 shares at 50% of last round price
+            sell_price = int(self.current_prices["CAMB"] * 0.5)
+            external_order = Order(
+                f"external-sell-{int(time.time())}",
+                "external_investor_1",
+                "External Investor (Seller)",
+                "CAMB",
+                "SELL",
+                sell_price,
+                500,
+                self.current_round
+            )
+            self.orders.append(external_order)
+            logger.info(f"Added external sell order: 500 shares at ${sell_price}")
+            
+        elif self.current_round == 7:
+            # External investor buys 500 shares at 200% of last round price
+            buy_price = int(self.current_prices["CAMB"] * 2.0)
+            external_order = Order(
+                f"external-buy-{int(time.time())}",
+                "external_investor_2", 
+                "External Investor (Buyer)",
+                "CAMB",
+                "BUY",
+                buy_price,
+                500,
+                self.current_round
+            )
+            self.orders.append(external_order)
+            logger.info(f"Added external buy order: 500 shares at ${buy_price}")
 
     def consolidate_orders_from_previous_round(self):
         """Consolidate ALL orders from the previous round for display (both pending and executed)"""
@@ -231,19 +304,19 @@ class GameState:
         return trades
 
     def update_player_portfolios(self, trades: List[Trade]):
-        """Update player portfolios based on executed trades"""
+        """Update player portfolios based on executed trades (skip external investors)"""
         for trade in trades:
             buyer = self.players.get(trade.buyer_id)
             seller = self.players.get(trade.seller_id)
             
-            if buyer and seller:
+            # Only update real players, not external investors
+            if buyer and not trade.buyer_id.startswith("external_investor"):
                 total_cost = trade.price * trade.quantity
-                
-                # Update buyer
                 buyer.cash -= total_cost
                 buyer.cambridge_shares += trade.quantity
                 
-                # Update seller
+            if seller and not trade.seller_id.startswith("external_investor"):
+                total_cost = trade.price * trade.quantity
                 seller.cash += total_cost
                 seller.cambridge_shares -= trade.quantity
 
@@ -431,6 +504,9 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     # Clear current round orders (start fresh)
                     game_state.orders = []
                     
+                    # Add external investor orders if applicable
+                    game_state.add_external_investor_orders()
+                    
                     # Consolidate orders from previous round for display (if round > 1)
                     if game_state.current_round > 1:
                         game_state.consolidate_orders_from_previous_round()
@@ -527,14 +603,14 @@ async def process_round():
     new_prices = game_state.calculate_new_prices(new_trades)
     game_state.current_prices = new_prices
     
-    # Update player portfolios
+    # Update player portfolios (external investors don't get updated)
     game_state.update_player_portfolios(new_trades)
     game_state.update_total_values()
     
     # Add new price point to history if there were trades
     if new_trades:
         game_state.price_history.append(PricePoint(
-            10 + game_state.current_round,
+            20 + game_state.current_round,  # Updated to reflect 20 historical days
             new_prices["CAMB"],
             game_state.current_round,
             True
@@ -567,6 +643,9 @@ async def next_round():
         
         # Clear current round orders (start fresh - no carryover)
         game_state.orders = []
+        
+        # Add external investor orders if applicable
+        game_state.add_external_investor_orders()
         
         # Consolidate orders from previous round for display
         game_state.consolidate_orders_from_previous_round()
