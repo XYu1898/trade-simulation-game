@@ -1,155 +1,94 @@
 # Trading Simulation Game
 
-This is a real-time multiplayer stock trading simulation game built with Next.js (React) for the frontend and FastAPI (Python) for the backend, communicating via WebSockets.
+A multiplayer stock trading simulation game with real-time WebSocket communication.
 
 ## Features
 
--   **Multiplayer:** Players can join a shared game instance.
--   **Real-time Updates:** Game state, prices, orders, and trades are updated in real-time via WebSockets.
--   **Two Stocks:** Trade Cambridge Mining (CAMB) and Oxford Water (OXFD) shares.
--   **Order Book:** View live buy and sell orders.
--   **Price Chart:** Visualize historical price movements.
--   **Player Portfolios:** Track cash, shares, total value, and profit/loss.
--   **Monitor Mode:** A special role to control game flow (start rounds, process orders).
--   **Market Makers:** AI-driven entities providing liquidity.
+- **Multiplayer Support**: Multiple players can join and trade simultaneously
+- **Monitor Role**: A monitor can control game flow and process rounds
+- **Real-time Updates**: All players see live updates of orders, trades, and prices
+- **Order Book**: View buy/sell orders for both stocks
+- **Market Makers**: AI players provide liquidity
+- **Live Scoreboard**: Real-time rankings and portfolio values
+- **Price Charts**: Historical price data with trade markers
 
-## Technologies Used
+## Architecture
 
--   **Frontend:**
-    -   Next.js (React)
-    -   TypeScript
-    -   Tailwind CSS
-    -   shadcn/ui
-    -   Recharts (for charts)
--   **Backend:**
-    -   FastAPI (Python)
-    -   WebSockets (websockets library)
-    -   Uvicorn (ASGI server)
--   **Deployment:**
-    -   Frontend: Vercel
-    -   Backend: Fly.io (or any other platform supporting Python/FastAPI)
+- **Frontend**: Next.js with React, TypeScript, and shadcn/ui
+- **Backend**: Python FastAPI with WebSocket support
+- **Deployment**: Frontend on Vercel, Backend on Fly.io
 
-## Getting Started
+## Setup Instructions
 
-### 1. Clone the Repository
+### Backend Deployment (Fly.io)
 
-\`\`\`bash
-git clone https://github.com/your-repo/trading-simulation-game.git
-cd trading-simulation-game
-\`\`\`
+1. Install Fly.io CLI:
+   \`\`\`bash
+   curl -L https://fly.io/install.sh | sh
+   \`\`\`
 
-### 2. Backend Setup (Python/FastAPI)
+2. Login to Fly.io:
+   \`\`\`bash
+   fly auth login
+   \`\`\`
 
-The backend is located in the `backend/` directory.
+3. Navigate to backend folder and deploy:
+   \`\`\`bash
+   cd backend
+   chmod +x deploy.sh
+   ./deploy.sh
+   \`\`\`
 
+4. Your backend will be available at: `https://trade-simulation-game.fly.dev`
+
+### Frontend Deployment (Vercel)
+
+1. Push your code to GitHub
+
+2. Connect your GitHub repo to Vercel
+
+3. Deploy - the frontend will automatically connect to your Fly.io backend
+
+## Game Rules
+
+1. **Two Stocks**: Cambridge Mining (CAMB) and Oxford Water (OXFD)
+2. **10 Rounds**: Each round allows up to 5 orders per player
+3. **Starting Capital**: $10,000 per player
+4. **Order Matching**: Orders execute when bid price ≥ ask price
+5. **Market Makers**: 5 AI players provide liquidity
+6. **Scoring**: Final ranking based on total portfolio value
+
+## How to Play
+
+1. **Join Game**: Enter your name and join as Player or Monitor
+2. **Wait for Players**: Monitor starts the game when ready
+3. **View Setup**: See game rules and historical price data
+4. **Trade**: Submit buy/sell orders each round
+5. **Monitor Processing**: Monitor processes each round when players are done
+6. **Live Updates**: See real-time price updates and portfolio changes
+7. **Final Scoreboard**: View final rankings after 10 rounds
+
+## Development
+
+### Local Backend
 \`\`\`bash
 cd backend
-\`\`\`
-
-**Create a Python Virtual Environment:**
-
-\`\`\`bash
-python3 -m venv venv
-source venv/bin/activate # On Windows: .\venv\Scripts\activate
-\`\`\`
-
-**Install Dependencies:**
-
-\`\`\`bash
 pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 \`\`\`
 
-**Run the Backend Server:**
-
+### Local Frontend
 \`\`\`bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-\`\`\`
-
-The backend will run on `http://localhost:8000`. The WebSocket endpoint will be `ws://localhost:8000/ws/trading-game-main`.
-
-### 3. Frontend Setup (Next.js)
-
-The frontend is located in the root directory.
-
-\`\`\`bash
-# Go back to the root directory if you are in 'backend'
-cd ..
-\`\`\`
-
-**Install Dependencies:**
-
-\`\`\`bash
-npm install # or yarn install or pnpm install
-\`\`\`
-
-**Environment Variables:**
-
-Create a `.env.local` file in the root directory and add your backend WebSocket URL:
-
-\`\`\`
-NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws/trading-game-main
-\`\`\`
-
-If you deploy your backend, update this URL to your deployed WebSocket endpoint (e.g., `wss://your-backend-app.fly.dev/ws/trading-game-main`).
-
-**Run the Frontend Development Server:**
-
-\`\`\`bash
+npm install
 npm run dev
 \`\`\`
 
-Open `http://localhost:3000` in your browser to see the application.
+## Environment Variables
 
-### 4. Deployment
+No environment variables needed - the frontend automatically connects to your Fly.io backend at `https://trade-simulation-game.fly.dev`.
 
-#### Deploying the Frontend to Vercel
+## Support
 
-1.  **Create a new Vercel Project:** Go to [Vercel Dashboard](https://vercel.com/new) and import your Git repository.
-2.  **Configure Environment Variable:** In your Vercel project settings, add the `NEXT_PUBLIC_WS_URL` environment variable, pointing to your deployed backend WebSocket URL.
-
-#### Deploying the Backend to Fly.io
-
-1.  **Install Fly.io CLI:** Follow the instructions on [Fly.io Docs](https://fly.io/docs/getting-started/installing-flyctl/).
-2.  **Login to Fly.io:**
-    \`\`\`bash
-    flyctl auth login
-    \`\`\`
-3.  **Deploy:** From the `backend/` directory, run the deploy script:
-    \`\`\`bash
-    ./deploy.sh
-    \`\`\`
-    This script will build and deploy your FastAPI application. Note the URL of your deployed app.
-
-## Game Flow
-
-1.  **Lobby:** Players join the game by entering their name. A monitor player can start the game.
-2.  **Setup:** Rules and initial price history are displayed. The monitor starts the first trading round.
-3.  **Trading:** Players can submit buy/sell orders for CAMB and OXFD. Each player can submit up to 2 orders per round. Monitor can force close orders or process the round.
-4.  **Processing:** Orders are matched, trades are executed, and new prices are calculated.
-5.  **Results:** Round results, recent trades, and updated scoreboard are displayed. Monitor can advance to the next round.
-6.  **Finished:** After 10 rounds, the final scoreboard and price history are shown. Players can start a new game.
-
-## Contributing
-
-Feel free to open issues or pull requests if you have suggestions or find bugs!
-\`\`\`
-
-```plaintext file="backend/Dockerfile"
-# Use a lightweight Python image
-FROM python:3.10-slim-buster
-
-# Set the working directory in the container
-WORKDIR /app
-
-# Copy the requirements file and install dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application code
-COPY backend/ .
-
-# Expose the port FastAPI will run on
-EXPOSE 8000
-
-# Command to run the FastAPI application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+For issues or questions, check the logs:
+- Backend logs: `fly logs -a trade-simulation-game`
+- Frontend logs: Check Vercel dashboard

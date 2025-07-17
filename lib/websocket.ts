@@ -1,127 +1,100 @@
-// lib/websocket.ts
-/**
- * Thin wrapper around a browser WebSocket with automatic URL resolution and
- * simple reconnect logic.
- *
- *  • Uses NEXT_PUBLIC_WS_URL if present – ex: wss://api.example.com
- *  • Otherwise falls back to the current origin (supporting dev + prod)
- *  • Automatically appends `/ws/${gameId}`
- */
-
 export interface GameMessage {
   type: string
   gameState?: any
   [key: string]: any
 }
 
-function buildWebSocketUrl(gameId: string): string {
-  // 1. Prefer explicit environment variable
-  const env = (process.env.NEXT_PUBLIC_WS_URL || "").trim().replace(/\/$/, "")
-  if (env) return `${env}/ws/${gameId}`
-
-  // 2. Fallback to current location (handles v0 preview & localhost)
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-  const host = window.location.host
-  return `${protocol}//${host}/ws/${gameId}`
-}
-
 export class GameWebSocket {
   private ws: WebSocket | null = null
-  private readonly gameId: string
-  private handlers: Array<(m: GameMessage) => void> = []
-
-  /* ----------  Re-connect state  ---------- */
-  private reconnects = 0
-  private readonly maxReconnects = 5
-  private readonly reconnectDelay = 1_000 // ms
+  private gameId: string
+  private messageHandlers: ((message: GameMessage) => void)[] = []
+  private reconnectAttempts = 0
+  private maxReconnectAttempts = 5
+  private reconnectDelay = 1000
 
   constructor(gameId: string) {
     this.gameId = gameId
   }
 
-  /* ----------  Public API  ---------- */
-
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = buildWebSocketUrl(this.gameId)
-      console.info("[WS] Connecting →", url)
+      try {
+        // Use environment variable or fallback to fly.dev
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "wss://trade-simulation-game.fly.dev"
+        const fullUrl = `${wsUrl}/ws/${this.gameId}`
 
-      this.ws = new WebSocket(url)
+        console.log("Connecting to WebSocket:", fullUrl)
 
-      /* ----- lifecycle ----- */
-      this.ws.onopen = () => {
-        console.info("[WS] ✔ connected")
-        this.reconnects = 0
-        resolve()
-      }
+        this.ws = new WebSocket(fullUrl)
 
-      this.ws.onmessage = (evt) => {
-        try {
-          const msg: GameMessage = JSON.parse(evt.data)
-          this.handlers.forEach((h) => h(msg))
-        } catch (err) {
-          console.error("[WS] failed to parse message", err)
+        this.ws.onopen = () => {
+          console.log("WebSocket connected successfully")
+          this.reconnectAttempts = 0
+          resolve()
         }
-      }
 
-      this.ws.onerror = (evt) => {
-        console.error("[WS] socket error", evt)
-        // close() triggers onclose → attemptReconnect()
-        this.ws?.close()
-      }
-
-      this.ws.onclose = (evt) => {
-        console.warn("[WS] closed:", evt.code, evt.reason)
-        this.attemptReconnect(reject)
-      }
-
-      /* ----- 10 s connection timeout ----- */
-      setTimeout(() => {
-        if (this.ws?.readyState !== WebSocket.OPEN) {
-          console.error("[WS] connection timeout")
-          this.ws?.close()
-          reject(new Error("WebSocket connection timeout"))
+        this.ws.onmessage = (event) => {
+          try {
+            const message: GameMessage = JSON.parse(event.data)
+            this.messageHandlers.forEach((handler) => handler(message))
+          } catch (error) {
+            console.error("Error parsing WebSocket message:", error)
+          }
         }
-      }, 10_000)
+
+        this.ws.onclose = (event) => {
+          console.log("WebSocket connection closed:", event.code, event.reason)
+          this.attemptReconnect()
+        }
+
+        this.ws.onerror = (error) => {
+          console.error("WebSocket error:", error)
+          reject(error)
+        }
+
+        // Connection timeout
+        setTimeout(() => {
+          if (this.ws?.readyState !== WebSocket.OPEN) {
+            reject(new Error("WebSocket connection timeout"))
+          }
+        }, 10000)
+      } catch (error) {
+        reject(error)
+      }
     })
   }
 
-  sendMessage(message: GameMessage) {
+  private attemptReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++
+      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
+
+      setTimeout(() => {
+        this.connect().catch((error) => {
+          console.error("Reconnection failed:", error)
+        })
+      }, this.reconnectDelay * this.reconnectAttempts)
+    } else {
+      console.error("Max reconnection attempts reached")
+    }
+  }
+
+  sendMessage(message: any) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
     } else {
-      console.warn("[WS] send failed – socket not open", message)
+      console.error("WebSocket is not connected")
     }
   }
 
-  onMessage(handler: (m: GameMessage) => void) {
-    this.handlers.push(handler)
+  onMessage(handler: (message: GameMessage) => void) {
+    this.messageHandlers.push(handler)
   }
 
   disconnect() {
-    this.reconnects = this.maxReconnects // stop reconnect loop
-    this.ws?.close()
-    this.ws = null
-  }
-
-  /* ----------  Private helpers  ---------- */
-
-  private attemptReconnect(initialReject: (err?: any) => void) {
-    if (this.reconnects >= this.maxReconnects) {
-      console.error("[WS] ❌ maximum reconnect attempts reached")
-      initialReject(new Error("Maximum reconnect attempts reached"))
-      return
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
     }
-
-    this.reconnects++
-    const delay = this.reconnectDelay * this.reconnects
-    console.info(`[WS] retrying in ${delay} ms…  (${this.reconnects}/${this.maxReconnects})`)
-
-    setTimeout(() => {
-      this.connect().catch((err) => {
-        // keep bubbling errors so they don’t get swallowed
-        console.error("[WS] reconnect failed", err)
-      })
-    }, delay)
   }
 }

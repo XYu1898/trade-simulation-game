@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
 import { Trophy, Clock, BookOpen, Users, Monitor, Wifi, WifiOff, AlertCircle, LogIn, StopCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useGameState } from "./hooks/useGameState"
@@ -20,8 +21,6 @@ function TradeDot(props: any) {
   }
   return null
 }
-
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "@/lib/recharts"
 
 export default function TradingGame() {
   const gameId = "trading-game-main" // Single game instance
@@ -174,7 +173,7 @@ export default function TradingGame() {
     if (!playerOrder.price || !playerOrder.quantity) return
     if ((currentPlayer.ordersSubmitted || 0) >= 2) return
 
-    const price = Number.parseInt(playerOrder.price) // Ensure integer for CAMB
+    const price = Number.parseFloat(playerOrder.price)
     const quantity = Number.parseInt(playerOrder.quantity)
 
     // Validate order
@@ -288,11 +287,6 @@ export default function TradingGame() {
 
   // Setup phase - show rules and price history
   if (gameState?.phase === "SETUP") {
-    // Calculate min/max prices for dynamic Y-axis
-    const minPrice = Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining))
-    const maxPrice = Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining))
-    const yAxisDomain = [minPrice - 5, maxPrice + 5] // Add a buffer
-
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-6xl mx-auto">
@@ -311,7 +305,7 @@ export default function TradingGame() {
                 <Card className="w-96">
                   <CardHeader className="text-center">
                     <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-                    <div className="text-4xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
+                    <div className="text-4xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
                   </CardHeader>
                 </Card>
               </div>
@@ -351,7 +345,7 @@ export default function TradingGame() {
                         <LineChart data={gameState.priceHistory}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="day" />
-                          <YAxis domain={yAxisDomain} />
+                          <YAxis />
                           <ChartTooltip content={<ChartTooltipContent />} />
                           <Line
                             type="monotone"
@@ -390,11 +384,6 @@ export default function TradingGame() {
       .filter((p) => !p.isMarketMaker)
       .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
 
-    // Calculate min/max prices for dynamic Y-axis
-    const minPrice = Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining))
-    const maxPrice = Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining))
-    const yAxisDomain = [minPrice - 5, maxPrice + 5] // Add a buffer
-
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-4xl mx-auto">
@@ -430,7 +419,7 @@ export default function TradingGame() {
                       <LineChart data={gameState.priceHistory}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="day" />
-                        <YAxis domain={yAxisDomain} />
+                        <YAxis />
                         <ChartTooltip content={<ChartTooltipContent />} />
                         <Line
                           type="monotone"
@@ -512,11 +501,6 @@ export default function TradingGame() {
     )
   }
 
-  // Calculate min/max prices for dynamic Y-axis in trading/results phase
-  const minPrice = Math.min(...gameState.priceHistory.map((p) => p.cambridgeMining))
-  const maxPrice = Math.max(...gameState.priceHistory.map((p) => p.cambridgeMining))
-  const yAxisDomain = [minPrice - 5, maxPrice + 5] // Add a buffer
-
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -550,7 +534,7 @@ export default function TradingGame() {
           <Card className="w-96">
             <CardHeader className="text-center pb-2">
               <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-              <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
+              <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
             </CardHeader>
           </Card>
         </div>
@@ -676,10 +660,10 @@ export default function TradingGame() {
                     <Label>Price per Share</Label>
                     <Input
                       type="number"
-                      step="1"
+                      step="0.01"
                       value={playerOrder.price}
                       onChange={(e) => setPlayerOrder((prev) => ({ ...prev, price: e.target.value }))}
-                      placeholder="Enter your price (integer)"
+                      placeholder="Enter your price"
                     />
                   </div>
 
@@ -687,10 +671,9 @@ export default function TradingGame() {
                     <Label>Quantity</Label>
                     <Input
                       type="number"
-                      step="1"
                       value={playerOrder.quantity}
                       onChange={(e) => setPlayerOrder((prev) => ({ ...prev, quantity: e.target.value }))}
-                      placeholder="Number of shares (integer)"
+                      placeholder="Number of shares"
                     />
                   </div>
 
@@ -699,9 +682,7 @@ export default function TradingGame() {
                       <p className="text-sm">
                         <strong>
                           Total: $
-                          {(
-                            Number.parseInt(playerOrder.price) * Number.parseInt(playerOrder.quantity)
-                          ).toLocaleString()}
+                          {(Number.parseFloat(playerOrder.price) * Number.parseInt(playerOrder.quantity)).toFixed(2)}
                         </strong>
                       </p>
                     </div>
@@ -767,7 +748,7 @@ export default function TradingGame() {
                     <LineChart data={gameState.priceHistory}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="day" />
-                      <YAxis domain={yAxisDomain} />
+                      <YAxis />
                       <ChartTooltip content={<ChartTooltipContent />} />
                       <Line
                         type="monotone"
@@ -824,7 +805,7 @@ export default function TradingGame() {
                       <TableRow key={trade.id}>
                         <TableCell>{trade.round}</TableCell>
                         <TableCell className="font-medium">{trade.stock}</TableCell>
-                        <TableCell>${trade.price}</TableCell>
+                        <TableCell>${trade.price.toFixed(2)}</TableCell>
                         <TableCell>{trade.quantity}</TableCell>
                         <TableCell>{gameState.players.find((p) => p.id === trade.buyerId)?.name}</TableCell>
                         <TableCell>{gameState.players.find((p) => p.id === trade.sellerId)?.name}</TableCell>
@@ -836,8 +817,8 @@ export default function TradingGame() {
           </Card>
         )}
 
-        {/* Live Scoreboard - Only visible to Monitor */}
-        {isMonitor && humanPlayers.filter((p) => !p.isMonitor).length > 0 && (
+        {/* Live Scoreboard */}
+        {humanPlayers.filter((p) => !p.isMonitor).length > 0 && (
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -915,7 +896,7 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           ) : (
             orderBook.buyOrders.map((order) => (
               <div key={order.id} className="flex justify-between text-sm p-2 bg-green-50 rounded">
-                <span>${order.price}</span> {/* Display as integer */}
+                <span>${order.price.toFixed(2)}</span>
                 <span>{order.quantity}</span>
                 <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
@@ -932,7 +913,7 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           ) : (
             orderBook.sellOrders.map((order) => (
               <div key={order.id} className="flex justify-between text-sm p-2 bg-red-50 rounded">
-                <span>${order.price}</span> {/* Display as integer */}
+                <span>${order.price.toFixed(2)}</span>
                 <span>{order.quantity}</span>
                 <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
