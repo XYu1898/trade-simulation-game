@@ -188,6 +188,20 @@ export function useGameState(gameId: string) {
     })
   }, [gameSocket, isConnected, currentPlayerId])
 
+  const startTrading = useCallback(() => {
+    if (!gameSocket || !isConnected || !currentPlayerId) {
+      console.error("Cannot start trading: not connected")
+      return
+    }
+
+    console.log("Starting trading")
+
+    gameSocket.sendMessage({
+      type: "START_TRADING",
+      playerId: currentPlayerId,
+    })
+  }, [gameSocket, isConnected, currentPlayerId])
+
   const processRound = useCallback(() => {
     if (!gameSocket || !isConnected || !currentPlayerId) {
       console.error("Cannot process round: not connected")
@@ -226,6 +240,7 @@ export function useGameState(gameId: string) {
     markDone,
     forceCloseOrders,
     startGame,
+    startTrading,
     processRound,
     nextRound,
   }

@@ -17,14 +17,13 @@ logger = logging.getLogger(__name__)
 
 # Game state types
 class Player:
-    def __init__(self, player_id: str, name: str, is_monitor: bool = False, is_market_maker: bool = False):
+    def __init__(self, player_id: str, name: str, is_monitor: bool = False):
         self.id = player_id
         self.name = name
-        self.cash = 100000 if is_market_maker else 10000
-        self.cambridge_shares = 1000 if is_market_maker else 0
+        self.cash = 10000
+        self.cambridge_shares = 100 if not is_monitor else 0  # Give 100 shares to players, 0 to monitors
         self.total_value = self.cash
         self.is_monitor = is_monitor
-        self.is_market_maker = is_market_maker
         self.orders_submitted = 0
         self.is_done = False
         self.is_online = True
@@ -32,7 +31,7 @@ class Player:
 
 class Order:
     def __init__(self, order_id: str, player_id: str, player_name: str, stock: str, 
-                 order_type: str, price: int, quantity: int, round_num: int):
+                 order_type: str, price: float, quantity: int, round_num: int):
         self.id = order_id
         self.player_id = player_id
         self.player_name = player_name
@@ -45,7 +44,7 @@ class Order:
         self.filled_quantity = 0
 
 class Trade:
-    def __init__(self, trade_id: str, stock: str, price: int, quantity: int, 
+    def __init__(self, trade_id: str, stock: str, price: float, quantity: int, 
                  buyer_id: str, seller_id: str, round_num: int):
         self.id = trade_id
         self.stock = stock
@@ -56,7 +55,7 @@ class Trade:
         self.round = round_num
 
 class PricePoint:
-    def __init__(self, day: int, camb_price: int, 
+    def __init__(self, day: int, camb_price: float, 
                  round_num: Optional[int] = None, is_trade_day: bool = False):
         self.day = day
         self.cambridge_mining = camb_price
@@ -71,25 +70,17 @@ class GameState:
         self.orders: List[Order] = []
         self.trades: List[Trade] = []
         self.price_history: List[PricePoint] = []
-        self.current_prices = {"CAMB": 0}
+        self.current_prices = {"CAMB": 0.0}
         self.game_started = False
         self.websockets: Dict[str, WebSocket] = {}
         
-        # Initialize with market makers and price history
-        self._create_market_makers()
+        # Initialize price history
         self._generate_price_history()
-
-    def _create_market_makers(self):
-        """Create AI market makers"""
-        mm_names = ["Goldman MM", "Morgan MM", "Citadel MM", "Jane Street MM", "Virtu MM"]
-        for i, name in enumerate(mm_names):
-            mm_id = f"mm{i+1}"
-            self.players[mm_id] = Player(mm_id, name, is_market_maker=True)
 
     def _generate_price_history(self):
         """Generate synthetic price history for 10 days with V-shape recovery"""
         # Start at a high price
-        start_price = 75
+        start_price = 75.0
         
         # Create V-shape: decline for first 5 days, then recover for next 5 days
         prices = []
@@ -98,20 +89,20 @@ class GameState:
         current_price = start_price
         for day in range(1, 6):
             # Steep decline with some volatility
-            decline_amount = random.randint(4, 8) # Decline by 4-8 dollars
-            volatility = random.randint(-2, 2) # Add some noise
-            current_price = current_price - decline_amount + volatility
-            current_price = max(30, current_price) # Don't go below $30
-            prices.append((day, int(current_price))) # Ensure integer
+            decline = random.uniform(8, 12)  # 8-12% decline per day
+            volatility = random.uniform(-2, 2)  # Add some noise
+            current_price = current_price * (1 - decline/100 + volatility/100)
+            current_price = max(30, current_price)  # Don't go below $30
+            prices.append((day, round(current_price, 2)))
         
         # Recovery phase (days 6-10)
         for day in range(6, 11):
             # Strong recovery with volatility
-            recovery_amount = random.randint(5, 10) # Recover by 5-10 dollars
-            volatility = random.randint(-3, 3) # Add some noise
-            current_price = current_price + recovery_amount + volatility
-            current_price = min(100, current_price) # Cap at $100
-            prices.append((day, int(current_price))) # Ensure integer
+            recovery = random.uniform(10, 15)  # 10-15% recovery per day
+            volatility = random.uniform(-3, 3)  # Add some noise
+            current_price = current_price * (1 + recovery/100 + volatility/100)
+            current_price = min(100, current_price)  # Cap at $100
+            prices.append((day, round(current_price, 2)))
         
         # Create price history
         for day, price in prices:
@@ -123,6 +114,9 @@ class GameState:
     def add_player(self, player_id: str, name: str, is_monitor: bool = False):
         """Add a new player to the game"""
         self.players[player_id] = Player(player_id, name, is_monitor)
+        # Update total value to include initial shares
+        if not is_monitor:
+            self.players[player_id].total_value = self.players[player_id].cash + (self.players[player_id].cambridge_shares * self.current_prices["CAMB"])
         logger.info(f"Player {name} ({'Monitor' if is_monitor else 'Player'}) joined the game")
 
     def add_websocket(self, player_id: str, websocket: WebSocket):
@@ -135,62 +129,19 @@ class GameState:
             del self.websockets[player_id]
 
     def get_human_players(self) -> List[Player]:
-        """Get all human players (non-market makers)"""
-        return [p for p in self.players.values() if not p.is_market_maker]
+        """Get all human players"""
+        return [p for p in self.players.values()]
 
     def can_process_round(self) -> bool:
         """Check if round can be processed (all human players done or max orders)"""
-        human_players = self.get_human_players()
-        non_monitor_players = [p for p in human_players if not p.is_monitor]
-        return all(p.is_done or p.orders_submitted >= 2 for p in non_monitor_players)
+        human_players = [p for p in self.players.values() if not p.is_monitor]
+        return all(p.is_done or p.orders_submitted >= 2 for p in human_players)
 
     def force_close_orders(self):
         """Force close order submission for all players"""
         for player in self.players.values():
-            if not player.is_market_maker:
+            if not player.is_monitor:
                 player.is_done = True
-
-    def generate_market_maker_orders(self) -> List[Order]:
-        """Generate orders for market makers"""
-        mm_orders = []
-        
-        for player in self.players.values():
-            if not player.is_market_maker or player.is_done:
-                continue
-                
-            # Market makers place 2-4 orders
-            orders_to_place = random.randint(2, min(4, 5 - player.orders_submitted))
-            
-            for i in range(orders_to_place):
-                current_price = self.current_prices["CAMB"]
-                order_type = random.choice(["BUY", "SELL"])
-                
-                # Market makers quote around current price with +/- $5 spread
-                if order_type == "BUY":
-                    price = current_price - random.randint(1, 5)
-                else:
-                    price = current_price + random.randint(1, 5)
-                
-                price = max(1, int(price)) # Ensure price is at least 1 and integer
-                quantity = random.randint(50, 150)
-                
-                # Check if MM can place this order
-                can_place = True
-                if order_type == "BUY":
-                    can_place = player.cash >= price * quantity
-                else:
-                    can_place = player.cambridge_shares >= quantity
-                
-                if can_place:
-                    order_id = f"{player.id}-CAMB-{int(time.time())}-{i}"
-                    order = Order(order_id, player.id, player.name, "CAMB", 
-                                order_type, price, quantity, self.current_round)
-                    mm_orders.append(order)
-                    player.orders_submitted += 1
-            
-            player.is_done = True
-        
-        return mm_orders
 
     def process_orders(self) -> List[Trade]:
         """Process all pending orders and execute trades"""
@@ -219,9 +170,10 @@ class GameState:
             buy_order = buy_orders[buy_idx]
             sell_order = sell_orders[sell_idx]
             
+            # Only execute if bid price >= ask price
             if buy_order.price >= sell_order.price:
-                # Execute trade
-                trade_price = sell_order.price # Trade at seller's price
+                # Execute trade at the ask price (seller's price)
+                trade_price = sell_order.price
                 trade_quantity = min(buy_order.quantity, sell_order.quantity)
                 
                 trade_id = f"trade-{int(time.time())}-{random.randint(1000, 9999)}"
@@ -252,7 +204,8 @@ class GameState:
                 if sell_order.quantity == 0:
                     sell_idx += 1
             else:
-                sell_idx += 1
+                # No more matches possible
+                break
         
         return trades
 
@@ -273,19 +226,16 @@ class GameState:
                 seller.cash += total_cost
                 seller.cambridge_shares -= trade.quantity
 
-    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, int]: # Return type is now int
+    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, float]:
         """Calculate new prices based on executed trades"""
         new_prices = self.current_prices.copy()
         
         # Calculate volume-weighted average price for CAMB
         camb_trades = [t for t in trades if t.stock == "CAMB"]
         if camb_trades:
-            # If trades occurred, the last price should be the highest price the stocks were traded at.
-            highest_trade_price = max(t.price for t in camb_trades)
-            new_prices["CAMB"] = highest_trade_price
-        else:
-            # If no trades, the last price should be the most recent price.
-            new_prices["CAMB"] = self.current_prices["CAMB"]
+            total_volume = sum(t.quantity for t in camb_trades)
+            total_value = sum(t.price * t.quantity for t in camb_trades)
+            new_prices["CAMB"] = round(total_value / total_volume, 2)
         
         return new_prices
 
@@ -308,7 +258,7 @@ class GameState:
                     "cambridgeShares": p.cambridge_shares,
                     "totalValue": p.total_value,
                     "rank": p.rank,
-                    "isMarketMaker": p.is_market_maker,
+                    "isMarketMaker": False,  # No market makers
                     "isMonitor": p.is_monitor,
                     "ordersSubmitted": p.orders_submitted,
                     "isDone": p.is_done,
@@ -428,11 +378,22 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     game_state.phase = "SETUP"
                     await broadcast_game_update()
                     
+            elif message["type"] == "START_TRADING":
+                player = game_state.players.get(message["playerId"])
+                if player and player.is_monitor:
+                    game_state.phase = "TRADING"
+                    # Reset all player states for trading
+                    for p in game_state.players.values():
+                        if not p.is_monitor:
+                            p.orders_submitted = 0
+                            p.is_done = False
+                    await broadcast_game_update()
+                    
             elif message["type"] == "ORDER_SUBMIT":
                 player = game_state.players.get(message["playerId"])
-                if player and not player.is_monitor and player.orders_submitted < 2:
+                if player and not player.is_monitor and player.orders_submitted < 2 and game_state.phase == "TRADING":
                     order_data = message["data"]
-                    order_id = f"{message['playerId']}-{int(time.time())}"
+                    order_id = f"{message['playerId']}-{int(time.time())}-{random.randint(100, 999)}"
                     
                     order = Order(
                         order_id,
@@ -452,7 +413,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     
             elif message["type"] == "PLAYER_DONE":
                 player = game_state.players.get(message["playerId"])
-                if player:
+                if player and game_state.phase == "TRADING":
                     player.is_done = True
                     await broadcast_game_update()
                     
@@ -488,23 +449,23 @@ async def process_round():
     # Wait a bit for UI update
     await asyncio.sleep(2)
     
-    # Generate market maker orders
-    mm_orders = game_state.generate_market_maker_orders()
-    game_state.orders.extend(mm_orders)
-    
     # Process all orders and execute trades
     new_trades = game_state.process_orders()
     game_state.trades.extend(new_trades)
     
-    # Calculate new prices
+    # Calculate new prices based on trades
     new_prices = game_state.calculate_new_prices(new_trades)
     game_state.current_prices = new_prices
+    
+    # Update player portfolios
+    game_state.update_player_portfolios(new_trades)
+    game_state.update_total_values()
     
     # Add new price point to history if there were trades
     if new_trades:
         game_state.price_history.append(PricePoint(
-            10 + game_state.current_round, # Continue day count
-            new_prices["CAMB"], # Use integer price
+            10 + game_state.current_round,
+            new_prices["CAMB"],
             game_state.current_round,
             True
         ))
@@ -516,11 +477,10 @@ async def next_round():
     """Move to the next round or finish the game"""
     if game_state.current_round >= 10:
         # Game finished - calculate final rankings
-        human_players = game_state.get_human_players()
-        non_monitor_players = [p for p in human_players if not p.is_monitor]
-        non_monitor_players.sort(key=lambda x: x.total_value, reverse=True)
+        human_players = [p for p in game_state.players.values() if not p.is_monitor]
+        human_players.sort(key=lambda x: x.total_value, reverse=True)
         
-        for i, player in enumerate(non_monitor_players):
+        for i, player in enumerate(human_players):
             player.rank = i + 1
         
         game_state.phase = "FINISHED"
@@ -531,8 +491,9 @@ async def next_round():
         
         # Reset player states for new round
         for player in game_state.players.values():
-            player.orders_submitted = 0
-            player.is_done = False
+            if not player.is_monitor:
+                player.orders_submitted = 0
+                player.is_done = False
         
         # Remove filled orders, keep pending ones
         game_state.orders = [o for o in game_state.orders if o.status == "PENDING"]

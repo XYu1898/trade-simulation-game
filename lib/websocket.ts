@@ -19,8 +19,9 @@ export class GameWebSocket {
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        // Use environment variable or fallback to fly.dev
-        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "wss://trade-simulation-game.fly.dev"
+        // Build WebSocket URL
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || `${protocol}//trade-simulation-game.fly.dev`
         const fullUrl = `${wsUrl}/ws/${this.gameId}`
 
         console.log("Connecting to WebSocket:", fullUrl)
@@ -28,7 +29,7 @@ export class GameWebSocket {
         this.ws = new WebSocket(fullUrl)
 
         this.ws.onopen = () => {
-          console.log("WebSocket connected successfully")
+          console.log("WebSocket connected")
           this.reconnectAttempts = 0
           resolve()
         }
@@ -43,7 +44,7 @@ export class GameWebSocket {
         }
 
         this.ws.onclose = (event) => {
-          console.log("WebSocket connection closed:", event.code, event.reason)
+          console.log("WebSocket closed:", event.code, event.reason)
           this.attemptReconnect()
         }
 
@@ -74,8 +75,6 @@ export class GameWebSocket {
           console.error("Reconnection failed:", error)
         })
       }, this.reconnectDelay * this.reconnectAttempts)
-    } else {
-      console.error("Max reconnection attempts reached")
     }
   }
 
@@ -83,7 +82,7 @@ export class GameWebSocket {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
     } else {
-      console.error("WebSocket is not connected")
+      console.error("WebSocket not connected")
     }
   }
 

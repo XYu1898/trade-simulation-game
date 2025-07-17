@@ -34,6 +34,7 @@ export default function TradingGame() {
     markDone,
     forceCloseOrders,
     startGame,
+    startTrading,
     processRound,
     nextRound,
   } = useGameState(gameId)
@@ -47,7 +48,7 @@ export default function TradingGame() {
   })
 
   const currentPlayer = gameState?.players.find((p) => p.id === currentPlayerId)
-  const humanPlayers = gameState?.players.filter((p) => !p.isMarketMaker) || []
+  const humanPlayers = gameState?.players || []
   const isMonitor = currentPlayer?.isMonitor || false
 
   // Connection status display
@@ -213,7 +214,7 @@ export default function TradingGame() {
 
   const canProcessRound = () => {
     if (!gameState) return false
-    const humanPlayersOnly = gameState.players.filter((p) => !p.isMarketMaker && !p.isMonitor)
+    const humanPlayersOnly = gameState.players.filter((p) => !p.isMonitor)
     return humanPlayersOnly.every((p) => p.isDone || (p.ordersSubmitted || 0) >= 2)
   }
 
@@ -320,10 +321,11 @@ export default function TradingGame() {
                     <p>• 10 rounds of trading with order matching</p>
                     <p>• Submit up to 2 orders per round</p>
                     <p>• Click "Done" to finish early and wait for others</p>
-                    <p>• Orders execute when bid ≥ ask price</p>
+                    <p>• Orders execute when bid price ≥ ask price</p>
                     <p>• View order book depth before each decision</p>
-                    <p>• Starting capital: $10,000</p>
-                    <p>• Market makers provide liquidity</p>
+                    <p>• Starting: $10,000 cash + 100 CAMB shares</p>
+                    <p>• No market makers - only player trading</p>
+                    <p>• Next round price = last trade price</p>
                   </CardContent>
                 </Card>
 
@@ -364,7 +366,7 @@ export default function TradingGame() {
 
               <div className="text-center">
                 {isMonitor ? (
-                  <Button onClick={() => processRound()} size="lg">
+                  <Button onClick={startTrading} size="lg">
                     Start Trading Round 1
                   </Button>
                 ) : (
@@ -381,7 +383,7 @@ export default function TradingGame() {
   // Finished phase - show final scoreboard
   if (gameState?.phase === "FINISHED") {
     const humanPlayersOnly = gameState.players
-      .filter((p) => !p.isMarketMaker)
+      .filter((p) => !p.isMonitor)
       .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
 
     return (
@@ -467,8 +469,14 @@ export default function TradingGame() {
                       <TableCell>{player.cambridgeShares}</TableCell>
                       <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
                       <TableCell>
-                        <span className={player.totalValue >= 10000 ? "text-green-600" : "text-red-600"}>
-                          ${(player.totalValue - 10000).toLocaleString()}
+                        <span
+                          className={
+                            player.totalValue >= 10000 + 100 * gameState.currentPrices.CAMB
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }
+                        >
+                          ${(player.totalValue - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
                         </span>
                       </TableCell>
                     </TableRow>
@@ -568,9 +576,10 @@ export default function TradingGame() {
               <CardContent>
                 <div className="text-2xl font-bold">${currentPlayer?.totalValue.toLocaleString()}</div>
                 <p
-                  className={`text-xs ${(currentPlayer?.totalValue || 0) >= 10000 ? "text-green-600" : "text-red-600"}`}
+                  className={`text-xs ${(currentPlayer?.totalValue || 0) >= (10000 + 100 * gameState.currentPrices.CAMB) ? "text-green-600" : "text-red-600"}`}
                 >
-                  P&L: ${((currentPlayer?.totalValue || 0) - 10000).toLocaleString()}
+                  P&L: $
+                  {((currentPlayer?.totalValue || 0) - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -851,8 +860,14 @@ export default function TradingGame() {
                         <TableCell className="font-medium">{player.name}</TableCell>
                         <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
                         <TableCell>
-                          <span className={player.totalValue >= 10000 ? "text-green-600" : "text-red-600"}>
-                            ${(player.totalValue - 10000).toLocaleString()}
+                          <span
+                            className={
+                              player.totalValue >= 10000 + 100 * gameState.currentPrices.CAMB
+                                ? "text-green-600"
+                                : "text-red-600"
+                            }
+                          >
+                            ${(player.totalValue - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
                           </span>
                         </TableCell>
                         <TableCell>
