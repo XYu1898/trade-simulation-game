@@ -366,8 +366,6 @@ export default function TradingGame() {
                     <p>• Next round price = rounded trade average</p>
                     <p>• Only your own trades are visible</p>
                     <p>• Previous round orders shown consolidated</p>
-                    <p className="text-orange-600">
-                      • <strong>External investors may appear in rounds 4 & 7</strong>
                     </p>
                   </CardContent>
                 </Card>
