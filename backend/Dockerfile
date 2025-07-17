@@ -5,11 +5,11 @@ FROM python:3.10-slim-buster
 WORKDIR /app
 
 # Copy the requirements file and install dependencies
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
-COPY backend/ .
+COPY . .
 
 # Expose the port FastAPI will run on
 EXPOSE 8000
