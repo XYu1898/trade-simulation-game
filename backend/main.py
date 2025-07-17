@@ -67,13 +67,14 @@ class GameState:
         self.current_round = 1
         self.phase = "LOBBY"  # LOBBY, SETUP, TRADING, PROCESSING, RESULTS, FINISHED
         self.players: Dict[str, Player] = {}
-        self.orders: List[Order] = []
+        self.orders: List[Order] = []  # Current round orders
         self.trades: List[Trade] = []
         self.price_history: List[PricePoint] = []
         self.current_prices = {"CAMB": 50}  # Set initial price to 50
         self.game_started = False
         self.websockets: Dict[str, WebSocket] = {}
-        self.consolidated_orders: Dict[str, Dict] = {}  # For displaying consolidated orders
+        self.consolidated_orders: Dict[str, Dict] = {"BUY": {}, "SELL": {}}  # For displaying consolidated orders
+        self.previous_round_orders: List[Order] = []  # Store ALL orders from previous round (pending + executed)
         
         # Initialize price history
         self._generate_price_history()
@@ -144,26 +145,30 @@ class GameState:
             if not player.is_monitor:
                 player.is_done = True
 
-    def consolidate_orders(self):
-        """Consolidate orders by price for display"""
+    def consolidate_orders_from_previous_round(self):
+        """Consolidate ALL orders from the previous round for display (both pending and executed)"""
         self.consolidated_orders = {"BUY": {}, "SELL": {}}
         
-        pending_orders = [o for o in self.orders if o.status == "PENDING" and o.stock == "CAMB"]
+        # Use ALL orders from previous round (both pending and executed)
+        orders_to_consolidate = self.previous_round_orders
         
-        for order in pending_orders:
-            order_type = order.type
-            price = order.price
-            
-            if price not in self.consolidated_orders[order_type]:
-                self.consolidated_orders[order_type][price] = 0
-            
-            self.consolidated_orders[order_type][price] += order.quantity
+        for order in orders_to_consolidate:
+            if order.stock == "CAMB":
+                order_type = order.type
+                price = order.price
+                
+                if price not in self.consolidated_orders[order_type]:
+                    self.consolidated_orders[order_type][price] = 0
+                
+                # Add the original quantity (not remaining quantity)
+                original_quantity = order.quantity + (order.filled_quantity or 0)
+                self.consolidated_orders[order_type][price] += original_quantity
 
     def process_orders(self) -> List[Trade]:
         """Process all pending orders and execute trades"""
         trades = []
         
-        # Get CAMB orders
+        # Get CAMB orders from current round
         camb_buys = [o for o in self.orders if o.stock == "CAMB" and o.type == "BUY" and o.status == "PENDING"]
         camb_sells = [o for o in self.orders if o.stock == "CAMB" and o.type == "SELL" and o.status == "PENDING"]
         
@@ -316,7 +321,7 @@ class GameState:
                 for p in self.players.values()
             ],
             "orders": orders_to_show,
-            "consolidatedOrders": self.consolidated_orders if self.current_round > 1 else {"BUY": {}, "SELL": {}},
+            "consolidatedOrders": self.consolidated_orders,
             "trades": [
                 {
                     "id": t.id,
@@ -422,6 +427,14 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                         if not p.is_monitor:
                             p.orders_submitted = 0
                             p.is_done = False
+                    
+                    # Clear current round orders (start fresh)
+                    game_state.orders = []
+                    
+                    # Consolidate orders from previous round for display (if round > 1)
+                    if game_state.current_round > 1:
+                        game_state.consolidate_orders_from_previous_round()
+                    
                     await broadcast_game_update()
                     
             elif message["type"] == "ORDER_SUBMIT":
@@ -487,6 +500,25 @@ async def process_round():
     # Wait a bit for UI update
     await asyncio.sleep(2)
     
+    # Store ALL current orders as previous round orders before processing
+    # This includes both the original quantities and any partial fills
+    game_state.previous_round_orders = []
+    for order in game_state.orders:
+        # Create a copy of the order with original quantities for display
+        order_copy = Order(
+            order.id,
+            order.player_id,
+            order.player_name,
+            order.stock,
+            order.type,
+            order.price,
+            order.quantity + (order.filled_quantity or 0),  # Original quantity
+            order.round
+        )
+        order_copy.status = order.status
+        order_copy.filled_quantity = order.filled_quantity or 0
+        game_state.previous_round_orders.append(order_copy)
+    
     # Process all orders and execute trades
     new_trades = game_state.process_orders()
     game_state.trades.extend(new_trades)
@@ -507,9 +539,6 @@ async def process_round():
             game_state.current_round,
             True
         ))
-    
-    # Consolidate orders for next round display
-    game_state.consolidate_orders()
     
     game_state.phase = "RESULTS"
     await broadcast_game_update()
@@ -536,8 +565,11 @@ async def next_round():
                 player.orders_submitted = 0
                 player.is_done = False
         
-        # Remove filled orders, keep pending ones
-        game_state.orders = [o for o in game_state.orders if o.status == "PENDING"]
+        # Clear current round orders (start fresh - no carryover)
+        game_state.orders = []
+        
+        # Consolidate orders from previous round for display
+        game_state.consolidate_orders_from_previous_round()
     
     await broadcast_game_update()
 

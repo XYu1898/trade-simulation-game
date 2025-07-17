@@ -213,12 +213,12 @@ export default function TradingGame() {
       return { buyOrders: [], sellOrders: [] }
     }
 
-    const buyOrders = Object.entries(gameState.consolidatedOrders.BUY)
-      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity }))
+    const buyOrders = Object.entries(gameState.consolidatedOrders.BUY || {})
+      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity: quantity as number }))
       .sort((a, b) => b.price - a.price)
 
-    const sellOrders = Object.entries(gameState.consolidatedOrders.SELL)
-      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity }))
+    const sellOrders = Object.entries(gameState.consolidatedOrders.SELL || {})
+      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity: quantity as number }))
       .sort((a, b) => a.price - b.price)
 
     return { buyOrders, sellOrders }
@@ -341,6 +341,7 @@ export default function TradingGame() {
                     <p>• Orders are hidden until round processing</p>
                     <p>• Next round price = rounded trade average</p>
                     <p>• Only your own trades are visible</p>
+                    <p>• Previous round orders shown consolidated</p>
                   </CardContent>
                 </Card>
 
@@ -805,37 +806,31 @@ export default function TradingGame() {
               </CardContent>
             </Card>
 
-            {/* Consolidated Order Book (only show from round 2+) */}
-            {gameState.currentRound > 1 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BookOpen className="w-5 h-5" />
-                    CAMB Order Book (Consolidated)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ConsolidatedOrderBookDisplay orderBook={consolidatedOrderBook} />
-                </CardContent>
-              </Card>
-            )}
-
-            {gameState.currentRound === 1 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BookOpen className="w-5 h-5" />
-                    CAMB Order Book
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
+            {/* Consolidated Order Book */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BookOpen className="w-5 h-5" />
+                  CAMB Order Book - Previous Round{" "}
+                  {gameState.currentRound > 1 ? `(Round ${gameState.currentRound - 1})` : ""}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {gameState.currentRound === 1 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <p>No orders to display in first round</p>
                     <p className="text-sm mt-2">Orders will be consolidated and shown from round 2</p>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                ) : consolidatedOrderBook.buyOrders.length === 0 && consolidatedOrderBook.sellOrders.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No orders from previous round</p>
+                    <p className="text-sm mt-2">All previous orders were executed or cancelled</p>
+                  </div>
+                ) : (
+                  <ConsolidatedOrderBookDisplay orderBook={consolidatedOrderBook} />
+                )}
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -909,28 +904,26 @@ export default function TradingGame() {
                     .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
                     .map((player, index) => (
                       <TableRow key={player.id} className={player.id === currentPlayerId ? "bg-blue-50" : ""}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {index === 0 && <Trophy className="w-4 h-4 text-yellow-500" />}#{index + 1}
-                          </div>
-                        </TableCell>
+                        <TableCell>#{index + 1}</TableCell>
                         <TableCell className="font-medium">{player.name}</TableCell>
-                        <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
+                        <TableCell>${player.totalValue.toLocaleString()}</TableCell>
                         <TableCell>
                           <span className={player.totalValue >= initialValue ? "text-green-600" : "text-red-600"}>
                             ${(player.totalValue - initialValue).toLocaleString()}
                           </span>
                         </TableCell>
                         <TableCell>
-                          {player.isDone ? (
-                            <Badge variant="default" className="text-xs">
-                              Done
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-green-600">
+                              Online
                             </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs">
-                              Trading
-                            </Badge>
-                          )}
+                            {gameState.phase === "TRADING" && (
+                              <Badge variant="outline">
+                                {player.ordersSubmitted || 0}/2
+                                {player.isDone && " (Done)"}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -944,44 +937,40 @@ export default function TradingGame() {
   )
 }
 
-interface ConsolidatedOrderBookDisplayProps {
-  orderBook: {
-    buyOrders: { price: number; quantity: number }[]
-    sellOrders: { price: number; quantity: number }[]
-  }
-}
-
-function ConsolidatedOrderBookDisplay({ orderBook }: ConsolidatedOrderBookDisplayProps) {
+// Component to display consolidated order book
+function ConsolidatedOrderBookDisplay({ orderBook }: { orderBook: { buyOrders: any[]; sellOrders: any[] } }) {
   return (
     <div className="grid grid-cols-2 gap-4">
+      {/* Buy Orders */}
       <div>
-        <h4 className="font-medium text-green-600 mb-2">Buy Orders (Bids)</h4>
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {orderBook.buyOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No buy orders</p>
-          ) : (
+        <h4 className="font-medium text-green-600 mb-2">Buy Orders</h4>
+        <div className="space-y-1">
+          {orderBook.buyOrders.length > 0 ? (
             orderBook.buyOrders.map((order, index) => (
               <div key={index} className="flex justify-between text-sm p-2 bg-green-50 rounded">
                 <span>${order.price}</span>
                 <span>{order.quantity}</span>
               </div>
             ))
+          ) : (
+            <p className="text-sm text-muted-foreground">No buy orders</p>
           )}
         </div>
       </div>
 
+      {/* Sell Orders */}
       <div>
-        <h4 className="font-medium text-red-600 mb-2">Sell Orders (Asks)</h4>
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {orderBook.sellOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sell orders</p>
-          ) : (
+        <h4 className="font-medium text-red-600 mb-2">Sell Orders</h4>
+        <div className="space-y-1">
+          {orderBook.sellOrders.length > 0 ? (
             orderBook.sellOrders.map((order, index) => (
               <div key={index} className="flex justify-between text-sm p-2 bg-red-50 rounded">
                 <span>${order.price}</span>
                 <span>{order.quantity}</span>
               </div>
             ))
+          ) : (
+            <p className="text-sm text-muted-foreground">No sell orders</p>
           )}
         </div>
       </div>
