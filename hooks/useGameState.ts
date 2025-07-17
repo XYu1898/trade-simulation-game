@@ -47,11 +47,17 @@ interface Player {
   isOnline?: boolean
 }
 
+interface ConsolidatedOrders {
+  BUY: { [price: number]: number }
+  SELL: { [price: number]: number }
+}
+
 interface GameState {
   currentRound: number
   phase: "LOBBY" | "SETUP" | "TRADING" | "PROCESSING" | "RESULTS" | "FINISHED"
   players: Player[]
   orders: Order[]
+  consolidatedOrders: ConsolidatedOrders
   trades: Trade[]
   priceHistory: PricePoint[]
   currentPrices: { CAMB: number }

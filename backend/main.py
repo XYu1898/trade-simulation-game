@@ -21,7 +21,7 @@ class Player:
         self.id = player_id
         self.name = name
         self.cash = 10000
-        self.cambridge_shares = 100 if not is_monitor else 0  # Give 100 shares to players, 0 to monitors
+        self.cambridge_shares = 200 if not is_monitor else 0  # Give 200 shares to players, 0 to monitors
         self.total_value = self.cash
         self.is_monitor = is_monitor
         self.orders_submitted = 0
@@ -31,7 +31,7 @@ class Player:
 
 class Order:
     def __init__(self, order_id: str, player_id: str, player_name: str, stock: str, 
-                 order_type: str, price: float, quantity: int, round_num: int):
+                 order_type: str, price: int, quantity: int, round_num: int):  # price is now int
         self.id = order_id
         self.player_id = player_id
         self.player_name = player_name
@@ -44,8 +44,8 @@ class Order:
         self.filled_quantity = 0
 
 class Trade:
-    def __init__(self, trade_id: str, stock: str, price: float, quantity: int, 
-                 buyer_id: str, seller_id: str, round_num: int):
+    def __init__(self, trade_id: str, stock: str, price: int, quantity: int, 
+                 buyer_id: str, seller_id: str, round_num: int):  # price is now int
         self.id = trade_id
         self.stock = stock
         self.price = price
@@ -55,8 +55,8 @@ class Trade:
         self.round = round_num
 
 class PricePoint:
-    def __init__(self, day: int, camb_price: float, 
-                 round_num: Optional[int] = None, is_trade_day: bool = False):
+    def __init__(self, day: int, camb_price: int, 
+                 round_num: Optional[int] = None, is_trade_day: bool = False):  # price is now int
         self.day = day
         self.cambridge_mining = camb_price
         self.round = round_num
@@ -70,9 +70,10 @@ class GameState:
         self.orders: List[Order] = []
         self.trades: List[Trade] = []
         self.price_history: List[PricePoint] = []
-        self.current_prices = {"CAMB": 0.0}
+        self.current_prices = {"CAMB": 50}  # Set initial price to 50
         self.game_started = False
         self.websockets: Dict[str, WebSocket] = {}
+        self.consolidated_orders: Dict[str, Dict] = {}  # For displaying consolidated orders
         
         # Initialize price history
         self._generate_price_history()
@@ -80,7 +81,7 @@ class GameState:
     def _generate_price_history(self):
         """Generate synthetic price history for 10 days with V-shape recovery"""
         # Start at a high price
-        start_price = 75.0
+        start_price = 75
         
         # Create V-shape: decline for first 5 days, then recover for next 5 days
         prices = []
@@ -93,7 +94,7 @@ class GameState:
             volatility = random.uniform(-2, 2)  # Add some noise
             current_price = current_price * (1 - decline/100 + volatility/100)
             current_price = max(30, current_price)  # Don't go below $30
-            prices.append((day, round(current_price, 2)))
+            prices.append((day, int(round(current_price))))
         
         # Recovery phase (days 6-10)
         for day in range(6, 11):
@@ -102,14 +103,14 @@ class GameState:
             volatility = random.uniform(-3, 3)  # Add some noise
             current_price = current_price * (1 + recovery/100 + volatility/100)
             current_price = min(100, current_price)  # Cap at $100
-            prices.append((day, round(current_price, 2)))
+            prices.append((day, int(round(current_price))))
         
         # Create price history
         for day, price in prices:
             self.price_history.append(PricePoint(day, price))
         
-        # Set current price from last day
-        self.current_prices = {"CAMB": prices[-1][1]}
+        # Set current price to 50 (override the generated price)
+        self.current_prices = {"CAMB": 50}
 
     def add_player(self, player_id: str, name: str, is_monitor: bool = False):
         """Add a new player to the game"""
@@ -142,6 +143,21 @@ class GameState:
         for player in self.players.values():
             if not player.is_monitor:
                 player.is_done = True
+
+    def consolidate_orders(self):
+        """Consolidate orders by price for display"""
+        self.consolidated_orders = {"BUY": {}, "SELL": {}}
+        
+        pending_orders = [o for o in self.orders if o.status == "PENDING" and o.stock == "CAMB"]
+        
+        for order in pending_orders:
+            order_type = order.type
+            price = order.price
+            
+            if price not in self.consolidated_orders[order_type]:
+                self.consolidated_orders[order_type][price] = 0
+            
+            self.consolidated_orders[order_type][price] += order.quantity
 
     def process_orders(self) -> List[Trade]:
         """Process all pending orders and execute trades"""
@@ -226,7 +242,7 @@ class GameState:
                 seller.cash += total_cost
                 seller.cambridge_shares -= trade.quantity
 
-    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, float]:
+    def calculate_new_prices(self, trades: List[Trade]) -> Dict[str, int]:
         """Calculate new prices based on executed trades"""
         new_prices = self.current_prices.copy()
         
@@ -235,7 +251,8 @@ class GameState:
         if camb_trades:
             total_volume = sum(t.quantity for t in camb_trades)
             total_value = sum(t.price * t.quantity for t in camb_trades)
-            new_prices["CAMB"] = round(total_value / total_volume, 2)
+            vwap = total_value / total_volume
+            new_prices["CAMB"] = int(round(vwap))  # Round to nearest integer
         
         return new_prices
 
@@ -245,8 +262,40 @@ class GameState:
             player.total_value = (player.cash + 
                                 player.cambridge_shares * self.current_prices["CAMB"])
 
-    def to_dict(self) -> Dict[str, Any]:
+    def get_player_trades(self, player_id: str) -> List[Trade]:
+        """Get trades for a specific player"""
+        return [t for t in self.trades if t.buyer_id == player_id or t.seller_id == player_id]
+
+    def to_dict(self, requesting_player_id: str = None) -> Dict[str, Any]:
         """Convert game state to dictionary for JSON serialization"""
+        # Get player-specific trades if requesting_player_id is provided
+        if requesting_player_id:
+            player_trades = self.get_player_trades(requesting_player_id)
+            requesting_player = self.players.get(requesting_player_id)
+            is_monitor = requesting_player.is_monitor if requesting_player else False
+        else:
+            player_trades = []
+            is_monitor = False
+        
+        # Only show orders to monitor during trading phase
+        orders_to_show = []
+        if is_monitor and self.phase == "TRADING":
+            orders_to_show = [
+                {
+                    "id": o.id,
+                    "playerId": o.player_id,
+                    "playerName": o.player_name,
+                    "stock": o.stock,
+                    "type": o.type,
+                    "price": o.price,
+                    "quantity": o.quantity,
+                    "round": o.round,
+                    "status": o.status,
+                    "filledQuantity": o.filled_quantity
+                }
+                for o in self.orders if o.status == "PENDING"
+            ]
+        
         return {
             "currentRound": self.current_round,
             "phase": self.phase,
@@ -266,21 +315,8 @@ class GameState:
                 }
                 for p in self.players.values()
             ],
-            "orders": [
-                {
-                    "id": o.id,
-                    "playerId": o.player_id,
-                    "playerName": o.player_name,
-                    "stock": o.stock,
-                    "type": o.type,
-                    "price": o.price,
-                    "quantity": o.quantity,
-                    "round": o.round,
-                    "status": o.status,
-                    "filledQuantity": o.filled_quantity
-                }
-                for o in self.orders
-            ],
+            "orders": orders_to_show,
+            "consolidatedOrders": self.consolidated_orders if self.current_round > 1 else {"BUY": {}, "SELL": {}},
             "trades": [
                 {
                     "id": t.id,
@@ -291,7 +327,7 @@ class GameState:
                     "sellerId": t.seller_id,
                     "round": t.round
                 }
-                for t in self.trades
+                for t in player_trades  # Only show player's own trades
             ],
             "priceHistory": [
                 {
@@ -326,15 +362,14 @@ async def broadcast_game_update():
     if not game_state.websockets:
         return
     
-    message = {
-        "type": "GAME_UPDATE",
-        "gameState": game_state.to_dict()
-    }
-    
-    # Send to all connected websockets
+    # Send personalized updates to each player
     disconnected = []
     for player_id, websocket in game_state.websockets.items():
         try:
+            message = {
+                "type": "GAME_UPDATE",
+                "gameState": game_state.to_dict(player_id)
+            }
             await websocket.send_text(json.dumps(message))
         except Exception as e:
             logger.error(f"Error sending to {player_id}: {e}")
@@ -395,13 +430,16 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     order_data = message["data"]
                     order_id = f"{message['playerId']}-{int(time.time())}-{random.randint(100, 999)}"
                     
+                    # Ensure price is integer
+                    price = int(order_data["price"])
+                    
                     order = Order(
                         order_id,
                         order_data["playerId"],
                         order_data["playerName"],
                         order_data["stock"],
                         order_data["type"],
-                        order_data["price"],
+                        price,
                         order_data["quantity"],
                         game_state.current_round
                     )
@@ -469,6 +507,9 @@ async def process_round():
             game_state.current_round,
             True
         ))
+    
+    # Consolidate orders for next round display
+    game_state.consolidate_orders()
     
     game_state.phase = "RESULTS"
     await broadcast_game_update()

@@ -174,8 +174,14 @@ export default function TradingGame() {
     if (!playerOrder.price || !playerOrder.quantity) return
     if ((currentPlayer.ordersSubmitted || 0) >= 2) return
 
-    const price = Number.parseFloat(playerOrder.price)
+    const price = Number.parseInt(playerOrder.price)
     const quantity = Number.parseInt(playerOrder.quantity)
+
+    // Validate price is integer
+    if (!Number.isInteger(price) || price <= 0) {
+      alert("Price must be a positive integer!")
+      return
+    }
 
     // Validate order
     if (playerOrder.type === "BUY") {
@@ -202,12 +208,18 @@ export default function TradingGame() {
     setPlayerOrder({ stock: "CAMB", type: "BUY", price: "", quantity: "" })
   }
 
-  const getOrderBook = (stock: "CAMB") => {
-    if (!gameState) return { buyOrders: [], sellOrders: [] }
+  const getConsolidatedOrderBook = () => {
+    if (!gameState || !gameState.consolidatedOrders) {
+      return { buyOrders: [], sellOrders: [] }
+    }
 
-    const pendingOrders = gameState.orders.filter((o) => o.stock === stock && o.status === "PENDING")
-    const buyOrders = pendingOrders.filter((o) => o.type === "BUY").sort((a, b) => b.price - a.price)
-    const sellOrders = pendingOrders.filter((o) => o.type === "SELL").sort((a, b) => a.price - b.price)
+    const buyOrders = Object.entries(gameState.consolidatedOrders.BUY)
+      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity }))
+      .sort((a, b) => b.price - a.price)
+
+    const sellOrders = Object.entries(gameState.consolidatedOrders.SELL)
+      .map(([price, quantity]) => ({ price: Number.parseInt(price), quantity }))
+      .sort((a, b) => a.price - b.price)
 
     return { buyOrders, sellOrders }
   }
@@ -306,7 +318,7 @@ export default function TradingGame() {
                 <Card className="w-96">
                   <CardHeader className="text-center">
                     <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-                    <div className="text-4xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
+                    <div className="text-4xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
                   </CardHeader>
                 </Card>
               </div>
@@ -322,10 +334,13 @@ export default function TradingGame() {
                     <p>• Submit up to 2 orders per round</p>
                     <p>• Click "Done" to finish early and wait for others</p>
                     <p>• Orders execute when bid price ≥ ask price</p>
-                    <p>• View order book depth before each decision</p>
-                    <p>• Starting: $10,000 cash + 100 CAMB shares</p>
-                    <p>• No market makers - only player trading</p>
-                    <p>• Next round price = last trade price</p>
+                    <p>
+                      • <strong>Prices must be integers only</strong>
+                    </p>
+                    <p>• Starting: $10,000 cash + 200 CAMB shares</p>
+                    <p>• Orders are hidden until round processing</p>
+                    <p>• Next round price = rounded trade average</p>
+                    <p>• Only your own trades are visible</p>
                   </CardContent>
                 </Card>
 
@@ -385,6 +400,8 @@ export default function TradingGame() {
     const humanPlayersOnly = gameState.players
       .filter((p) => !p.isMonitor)
       .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
+
+    const initialValue = 10000 + 200 * 50 // Initial cash + shares * initial price
 
     return (
       <div className="min-h-screen bg-gray-50 p-6">
@@ -469,14 +486,8 @@ export default function TradingGame() {
                       <TableCell>{player.cambridgeShares}</TableCell>
                       <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
                       <TableCell>
-                        <span
-                          className={
-                            player.totalValue >= 10000 + 100 * gameState.currentPrices.CAMB
-                              ? "text-green-600"
-                              : "text-red-600"
-                          }
-                        >
-                          ${(player.totalValue - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
+                        <span className={player.totalValue >= initialValue ? "text-green-600" : "text-red-600"}>
+                          ${(player.totalValue - initialValue).toLocaleString()}
                         </span>
                       </TableCell>
                     </TableRow>
@@ -508,6 +519,9 @@ export default function TradingGame() {
       </div>
     )
   }
+
+  const initialValue = 10000 + 200 * 50 // Initial cash + shares * initial price
+  const consolidatedOrderBook = getConsolidatedOrderBook()
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -542,7 +556,7 @@ export default function TradingGame() {
           <Card className="w-96">
             <CardHeader className="text-center pb-2">
               <CardTitle className="text-lg">Cambridge Mining (CAMB)</CardTitle>
-              <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB.toFixed(2)}</div>
+              <div className="text-3xl font-bold text-blue-600">${gameState.currentPrices.CAMB}</div>
             </CardHeader>
           </Card>
         </div>
@@ -576,10 +590,9 @@ export default function TradingGame() {
               <CardContent>
                 <div className="text-2xl font-bold">${currentPlayer?.totalValue.toLocaleString()}</div>
                 <p
-                  className={`text-xs ${(currentPlayer?.totalValue || 0) >= (10000 + 100 * gameState.currentPrices.CAMB) ? "text-green-600" : "text-red-600"}`}
+                  className={`text-xs ${(currentPlayer?.totalValue || 0) >= initialValue ? "text-green-600" : "text-red-600"}`}
                 >
-                  P&L: $
-                  {((currentPlayer?.totalValue || 0) - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
+                  P&L: ${((currentPlayer?.totalValue || 0) - initialValue).toLocaleString()}
                 </p>
               </CardContent>
             </Card>
@@ -621,6 +634,23 @@ export default function TradingGame() {
                         ))}
                     </div>
                   </div>
+
+                  {/* Monitor can see current orders during trading */}
+                  {gameState.phase === "TRADING" && gameState.orders.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Current Orders</h4>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {gameState.orders.map((order) => (
+                          <div key={order.id} className="text-xs p-2 bg-gray-50 rounded">
+                            <span className={order.type === "BUY" ? "text-green-600" : "text-red-600"}>
+                              {order.type}
+                            </span>{" "}
+                            {order.quantity} @ ${order.price} ({order.playerName})
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {gameState.phase === "TRADING" && (
                     <div className="space-y-2">
@@ -666,13 +696,13 @@ export default function TradingGame() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Price per Share</Label>
+                    <Label>Price per Share (Integer Only)</Label>
                     <Input
                       type="number"
-                      step="0.01"
+                      step="1"
                       value={playerOrder.price}
                       onChange={(e) => setPlayerOrder((prev) => ({ ...prev, price: e.target.value }))}
-                      placeholder="Enter your price"
+                      placeholder="Enter integer price"
                     />
                   </div>
 
@@ -691,7 +721,9 @@ export default function TradingGame() {
                       <p className="text-sm">
                         <strong>
                           Total: $
-                          {(Number.parseFloat(playerOrder.price) * Number.parseInt(playerOrder.quantity)).toFixed(2)}
+                          {(
+                            Number.parseInt(playerOrder.price) * Number.parseInt(playerOrder.quantity)
+                          ).toLocaleString()}
                         </strong>
                       </p>
                     </div>
@@ -773,26 +805,45 @@ export default function TradingGame() {
               </CardContent>
             </Card>
 
-            {/* Order Book */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5" />
-                  CAMB Order Book
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <OrderBookDisplay orderBook={getOrderBook("CAMB")} />
-              </CardContent>
-            </Card>
+            {/* Consolidated Order Book (only show from round 2+) */}
+            {gameState.currentRound > 1 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BookOpen className="w-5 h-5" />
+                    CAMB Order Book (Consolidated)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ConsolidatedOrderBookDisplay orderBook={consolidatedOrderBook} />
+                </CardContent>
+              </Card>
+            )}
+
+            {gameState.currentRound === 1 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BookOpen className="w-5 h-5" />
+                    CAMB Order Book
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No orders to display in first round</p>
+                    <p className="text-sm mt-2">Orders will be consolidated and shown from round 2</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
 
-        {/* Recent Trades */}
+        {/* My Trades (only show player's own trades) */}
         {gameState.trades.length > 0 && (
           <Card className="mt-6">
             <CardHeader>
-              <CardTitle>Recent Trades</CardTitle>
+              <CardTitle>My Trades</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
@@ -800,26 +851,32 @@ export default function TradingGame() {
                   <TableRow>
                     <TableHead>Round</TableHead>
                     <TableHead>Stock</TableHead>
+                    <TableHead>Side</TableHead>
                     <TableHead>Price</TableHead>
                     <TableHead>Quantity</TableHead>
-                    <TableHead>Buyer</TableHead>
-                    <TableHead>Seller</TableHead>
+                    <TableHead>Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {gameState.trades
                     .slice(-10)
                     .reverse()
-                    .map((trade) => (
-                      <TableRow key={trade.id}>
-                        <TableCell>{trade.round}</TableCell>
-                        <TableCell className="font-medium">{trade.stock}</TableCell>
-                        <TableCell>${trade.price.toFixed(2)}</TableCell>
-                        <TableCell>{trade.quantity}</TableCell>
-                        <TableCell>{gameState.players.find((p) => p.id === trade.buyerId)?.name}</TableCell>
-                        <TableCell>{gameState.players.find((p) => p.id === trade.sellerId)?.name}</TableCell>
-                      </TableRow>
-                    ))}
+                    .map((trade) => {
+                      const isBuyer = trade.buyerId === currentPlayerId
+                      const side = isBuyer ? "BUY" : "SELL"
+                      return (
+                        <TableRow key={trade.id}>
+                          <TableCell>{trade.round}</TableCell>
+                          <TableCell className="font-medium">{trade.stock}</TableCell>
+                          <TableCell>
+                            <Badge variant={isBuyer ? "default" : "secondary"}>{side}</Badge>
+                          </TableCell>
+                          <TableCell>${trade.price}</TableCell>
+                          <TableCell>{trade.quantity}</TableCell>
+                          <TableCell>${(trade.price * trade.quantity).toLocaleString()}</TableCell>
+                        </TableRow>
+                      )
+                    })}
                 </TableBody>
               </Table>
             </CardContent>
@@ -860,14 +917,8 @@ export default function TradingGame() {
                         <TableCell className="font-medium">{player.name}</TableCell>
                         <TableCell className="font-bold">${player.totalValue.toLocaleString()}</TableCell>
                         <TableCell>
-                          <span
-                            className={
-                              player.totalValue >= 10000 + 100 * gameState.currentPrices.CAMB
-                                ? "text-green-600"
-                                : "text-red-600"
-                            }
-                          >
-                            ${(player.totalValue - (10000 + 100 * gameState.currentPrices.CAMB)).toLocaleString()}
+                          <span className={player.totalValue >= initialValue ? "text-green-600" : "text-red-600"}>
+                            ${(player.totalValue - initialValue).toLocaleString()}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -893,14 +944,14 @@ export default function TradingGame() {
   )
 }
 
-interface OrderBookDisplayProps {
+interface ConsolidatedOrderBookDisplayProps {
   orderBook: {
-    buyOrders: any[]
-    sellOrders: any[]
+    buyOrders: { price: number; quantity: number }[]
+    sellOrders: { price: number; quantity: number }[]
   }
 }
 
-function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
+function ConsolidatedOrderBookDisplay({ orderBook }: ConsolidatedOrderBookDisplayProps) {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div>
@@ -909,11 +960,10 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           {orderBook.buyOrders.length === 0 ? (
             <p className="text-sm text-muted-foreground">No buy orders</p>
           ) : (
-            orderBook.buyOrders.map((order) => (
-              <div key={order.id} className="flex justify-between text-sm p-2 bg-green-50 rounded">
-                <span>${order.price.toFixed(2)}</span>
+            orderBook.buyOrders.map((order, index) => (
+              <div key={index} className="flex justify-between text-sm p-2 bg-green-50 rounded">
+                <span>${order.price}</span>
                 <span>{order.quantity}</span>
-                <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
             ))
           )}
@@ -926,11 +976,10 @@ function OrderBookDisplay({ orderBook }: OrderBookDisplayProps) {
           {orderBook.sellOrders.length === 0 ? (
             <p className="text-sm text-muted-foreground">No sell orders</p>
           ) : (
-            orderBook.sellOrders.map((order) => (
-              <div key={order.id} className="flex justify-between text-sm p-2 bg-red-50 rounded">
-                <span>${order.price.toFixed(2)}</span>
+            orderBook.sellOrders.map((order, index) => (
+              <div key={index} className="flex justify-between text-sm p-2 bg-red-50 rounded">
+                <span>${order.price}</span>
                 <span>{order.quantity}</span>
-                <span className="text-xs text-muted-foreground truncate max-w-[60px]">{order.playerName}</span>
               </div>
             ))
           )}
